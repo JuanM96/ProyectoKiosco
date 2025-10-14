@@ -544,7 +544,7 @@ class KioscoPOS:
         frame_tarjetas.pack(fill='x', pady=10)
         
         # Calcular estadísticas
-        self.actualizar_estadisticas()
+        # self.actualizar_estadisticas()
         
         # Hoy
         self.card_hoy = tk.Frame(frame_tarjetas, bg='#dbeafe', relief='raised', bd=2)
@@ -643,7 +643,9 @@ class KioscoPOS:
             command=self.actualizar_estadisticas,
             cursor='hand2'
         ).pack(side='left', padx=5)
-        
+                
+        # Calcular estadísticas
+        self.actualizar_estadisticas()
         # Cargar ventas
         self.actualizar_tabla_ventas()
     
