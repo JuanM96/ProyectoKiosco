@@ -465,14 +465,14 @@ class KioscoPOS:
             yscrollcommand=scrollbar_tabla.set
         )
         
-        self.tabla_productos.heading('ID', text='ID')
-        self.tabla_productos.heading('Nombre', text='Nombre')
-        self.tabla_productos.heading('Precio', text='Precio')
-        self.tabla_productos.heading('Costo', text='Costo')
-        self.tabla_productos.heading('Stock', text='Stock')
-        self.tabla_productos.heading('Categoría', text='Categoría')
-        self.tabla_productos.heading('Código', text='Código Barras')
-        
+        self.tabla_productos.heading('ID', text='ID', command=lambda: self.ordenar_tabla_productos('ID'))
+        self.tabla_productos.heading('Nombre', text='Nombre', command=lambda: self.ordenar_tabla_productos('Nombre'))
+        self.tabla_productos.heading('Precio', text='Precio', command=lambda: self.ordenar_tabla_productos('Precio'))
+        self.tabla_productos.heading('Costo', text='Costo', command=lambda: self.ordenar_tabla_productos('Costo'))
+        self.tabla_productos.heading('Stock', text='Stock', command=lambda: self.ordenar_tabla_productos('Stock'))
+        self.tabla_productos.heading('Categoría', text='Categoría', command=lambda: self.ordenar_tabla_productos('Categoría'))
+        self.tabla_productos.heading('Código', text='Código Barras', command=lambda: self.ordenar_tabla_productos('Código'))
+            
         self.tabla_productos.column('ID', width=50)
         self.tabla_productos.column('Nombre', width=200)
         self.tabla_productos.column('Precio', width=80)
@@ -519,7 +519,15 @@ class KioscoPOS:
             command=self.exportar_productos_excel,
             cursor='hand2'
         ).pack(side='right', padx=5)
-        
+        tk.Button(
+        frame_acciones,
+        text="Importar Productos",
+        font=('Arial', 10),
+        bg='#0ea5e9',
+        fg='white',
+        command=self.importar_productos,
+        cursor='hand2'
+        ).pack(side='right', padx=5)
         # Cargar productos
         self.actualizar_tabla_productos()
     
@@ -641,6 +649,26 @@ class KioscoPOS:
             bg='#2563eb',
             fg='white',
             command=self.actualizar_estadisticas,
+            cursor='hand2'
+        ).pack(side='left', padx=5)
+        
+        tk.Label(
+            frame_exportar,
+            text="Fecha (YYYY-MM-DD):",
+            font=('Arial', 10),
+            bg='white'
+        ).pack(side='left', padx=5)
+
+        self.entry_fecha_reporte = tk.Entry(frame_exportar, font=('Arial', 10), width=12)
+        self.entry_fecha_reporte.pack(side='left', padx=5)
+
+        tk.Button(
+            frame_exportar,
+            text="Exportar Ventas por Día a Excel",
+            font=('Arial', 10, 'bold'),
+            bg='#0ea5e9',
+            fg='white',
+            command=self.exportar_ventas_dia_excel,
             cursor='hand2'
         ).pack(side='left', padx=5)
                 
@@ -1101,7 +1129,17 @@ class KioscoPOS:
             self.actualizar_tabla_productos()
             self.actualizar_lista_productos()
             messagebox.showinfo("Éxito", "Producto eliminado correctamente")
-    
+    def ordenar_tabla_productos(self, col, reverse=False):
+        """Ordena la tabla de productos por la columna seleccionada"""
+        l = [(self.tabla_productos.set(k, col), k) for k in self.tabla_productos.get_children('')]
+        try:
+            l.sort(key=lambda t: float(t[0]) if col in ['ID', 'Precio', 'Costo', 'Stock'] else t[0], reverse=reverse)
+        except ValueError:
+            l.sort(key=lambda t: t[0], reverse=reverse)
+        for index, (val, k) in enumerate(l):
+            self.tabla_productos.move(k, '', index)
+        # Alterna el orden para el próximo click
+        self.tabla_productos.heading(col, command=lambda: self.ordenar_tabla_productos(col, not reverse))
     def exportar_productos_excel(self):
         """Exporta los productos a Excel"""
         try:
@@ -1121,7 +1159,47 @@ class KioscoPOS:
                 messagebox.showinfo("Éxito", f"Productos exportados a: {filename}")
         except Exception as e:
             messagebox.showerror("Error", f"Error al exportar: {str(e)}")
+    def importar_productos(self):
+        """Importa productos desde un archivo Excel o CSV"""
+        file_path = filedialog.askopenfilename(
+            title="Selecciona archivo de productos",
+            filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv")]
+        )
+        if not file_path:
+            return
     
+        try:
+            if file_path.endswith('.xlsx'):
+                df = pd.read_excel(file_path)
+            else:
+                df = pd.read_csv(file_path)
+    
+            # Espera columnas: Nombre, Precio, Costo, Stock, Categoría, Código Barras
+            for _, row in df.iterrows():
+                nombre = row.get('Nombre')
+                precio = row.get('Precio')
+                costo = row.get('Costo')
+                stock = row.get('Stock')
+                categoria = row.get('Categoría', 'Otros')
+                codigo_barras = row.get('Código Barras', '')
+    
+                if pd.isnull(nombre) or pd.isnull(precio) or pd.isnull(costo) or pd.isnull(stock):
+                    continue  # Salta productos incompletos
+    
+                try:
+                    self.cursor.execute('''
+                        INSERT INTO productos (nombre, precio, costo, stock, categoria, codigo_barras)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (nombre, float(precio), float(costo), int(stock), categoria, str(codigo_barras)))
+                except sqlite3.IntegrityError:
+                    continue  # Salta duplicados
+    
+            self.conn.commit()
+            self.actualizar_tabla_productos()
+            self.actualizar_lista_productos()
+            messagebox.showinfo("Éxito", "Productos importados correctamente")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al importar: {str(e)}")
     # ===== MÉTODOS DE REPORTES =====
     
     def actualizar_estadisticas(self):
@@ -1234,7 +1312,58 @@ class KioscoPOS:
                 messagebox.showinfo("Éxito", f"Reporte completo exportado a: {filename}")
         except Exception as e:
             messagebox.showerror("Error", f"Error al exportar: {str(e)}")
-    
+    def exportar_ventas_dia_excel(self):
+        """Exporta las ventas de un día específico a Excel con totales"""
+        fecha = self.entry_fecha_reporte.get()
+        if not fecha:
+            messagebox.showwarning("Fecha requerida", "Por favor ingresa una fecha en formato YYYY-MM-DD")
+            return
+
+        try:
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx")],
+                initialfile=f"ventas_{fecha.replace('-', '')}.xlsx"
+            )
+            if filename:
+                # Ventas del día
+                self.cursor.execute('''
+                    SELECT * FROM ventas WHERE DATE(fecha) = ?
+                ''', (fecha,))
+                ventas = self.cursor.fetchall()
+                df_ventas = pd.DataFrame(ventas, columns=['ID', 'Fecha', 'Usuario', 'Método Pago', 'Total', 'Costo Total'])
+                df_ventas['Ganancia'] = df_ventas['Total'] - df_ventas['Costo Total']
+
+                # Items de ventas del día
+                venta_ids = [v[0] for v in ventas]
+                if venta_ids:
+                    placeholders = ','.join(['?'] * len(venta_ids))
+                    self.cursor.execute(f'''
+                        SELECT * FROM items_venta WHERE venta_id IN ({placeholders})
+                    ''', venta_ids)
+                    items = self.cursor.fetchall()
+                else:
+                    items = []
+                df_items = pd.DataFrame(items, columns=['ID', 'ID Venta', 'Producto', 'Cantidad', 'Precio Unit.', 'Costo Unit.'])
+
+                # Totales
+                total_vendido = df_ventas['Total'].sum() if not df_ventas.empty else 0
+                total_ganancia = df_ventas['Ganancia'].sum() if not df_ventas.empty else 0
+
+                # Exportar a Excel
+                with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                    df_ventas.to_excel(writer, sheet_name='Ventas', index=False)
+                    df_items.to_excel(writer, sheet_name='Detalle Ventas', index=False)
+                    # Totales
+                    df_totales = pd.DataFrame({
+                        'Total Vendido': [total_vendido],
+                        'Total Ganancia': [total_ganancia]
+                    })
+                    df_totales.to_excel(writer, sheet_name='Totales', index=False)
+
+                messagebox.showinfo("Éxito", f"Reporte de ventas del {fecha} exportado a: {filename}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al exportar: {str(e)}")
     # ===== MÉTODOS DE USUARIOS =====
     
     def agregar_usuario(self):
