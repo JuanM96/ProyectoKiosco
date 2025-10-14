@@ -714,17 +714,19 @@ class KioscoPOS:
         
         self.tabla_usuarios = ttk.Treeview(
             frame_tabla_users,
-            columns=('ID', 'Nombre', 'Rol'),
+            columns=('ID', 'Nombre', 'Contraseña', 'Rol'),
             show='headings',
             yscrollcommand=scrollbar_users.set
         )
         
         self.tabla_usuarios.heading('ID', text='ID')
         self.tabla_usuarios.heading('Nombre', text='Nombre')
+        self.tabla_usuarios.heading('Contraseña', text='Contraseña')
         self.tabla_usuarios.heading('Rol', text='Rol')
         
         self.tabla_usuarios.column('ID', width=80)
         self.tabla_usuarios.column('Nombre', width=250)
+        self.tabla_usuarios.column('Contraseña', width=200)
         self.tabla_usuarios.column('Rol', width=150)
         
         self.tabla_usuarios.pack(side='left', fill='both', expand=True)
@@ -739,7 +741,15 @@ class KioscoPOS:
             command=self.eliminar_usuario,
             cursor='hand2'
         ).pack(pady=10)
-        
+        tk.Button(
+            frame_lista_users,
+            text="Editar Usuario Seleccionado",
+            font=('Arial', 10),
+            bg='#ea580c',
+            fg='white',
+            command=self.editar_usuario,
+            cursor='hand2'
+        ).pack(pady=5) 
         self.actualizar_tabla_usuarios()
     
     # ===== MÉTODOS DE VENTA =====
@@ -1228,7 +1238,7 @@ class KioscoPOS:
     # ===== MÉTODOS DE USUARIOS =====
     
     def agregar_usuario(self):
-        """Agrega un nuevo usuario"""
+        """Agrega o actualiza un usuario"""
         nombre = self.user_nombre.get()
         password = self.user_password.get()
         rol = self.user_rol.get()
@@ -1238,18 +1248,29 @@ class KioscoPOS:
             return
         
         try:
-            self.cursor.execute('''
-                INSERT INTO usuarios (nombre, password, rol)
-                VALUES (?, ?, ?)
-            ''', (nombre, password, rol))
-            self.conn.commit()
-            
-            self.user_nombre.delete(0, tk.END)
-            self.user_password.delete(0, tk.END)
-            self.user_rol.set('empleado')
-            
-            self.actualizar_tabla_usuarios()
-            messagebox.showinfo("Éxito", "Usuario agregado correctamente")
+            if hasattr(self, 'usuario_id') and self.usuario_id:
+                # Actualizar usuario
+                self.cursor.execute('''
+                    UPDATE usuarios SET nombre=?, password=?, rol=? WHERE id=?
+                ''', (nombre, password, rol, self.usuario_id))
+                self.conn.commit()
+                messagebox.showinfo("Éxito", "Usuario actualizado correctamente")
+                self.usuario_id = None
+                self.actualizar_tabla_usuarios()
+            else:
+                self.cursor.execute('''
+                    INSERT INTO usuarios (nombre, password, rol)
+                    VALUES (?, ?, ?)
+                ''', (nombre, password, rol))
+                messagebox.showinfo("Éxito", "Usuario agregado correctamente")
+                self.conn.commit()
+                
+                self.user_nombre.delete(0, tk.END)
+                self.user_password.delete(0, tk.END)
+                self.user_rol.set('empleado')
+                
+                self.actualizar_tabla_usuarios()
+                messagebox.showinfo("Éxito", "Usuario agregado correctamente")
         except sqlite3.IntegrityError:
             messagebox.showerror("Error", "Ya existe un usuario con ese nombre")
     
@@ -1258,7 +1279,7 @@ class KioscoPOS:
         for item in self.tabla_usuarios.get_children():
             self.tabla_usuarios.delete(item)
         
-        self.cursor.execute('SELECT id, nombre, rol FROM usuarios')
+        self.cursor.execute('SELECT id, nombre, password, rol FROM usuarios')
         usuarios = self.cursor.fetchall()
         
         for usuario in usuarios:
@@ -1285,7 +1306,22 @@ class KioscoPOS:
             
             self.actualizar_tabla_usuarios()
             messagebox.showinfo("Éxito", "Usuario eliminado correctamente")
-    
+    def editar_usuario(self):
+        """Carga el usuario seleccionado en el formulario para editar"""
+        seleccion = self.tabla_usuarios.selection()
+        if not seleccion:
+            messagebox.showwarning("Selección", "Por favor selecciona un usuario")
+            return
+
+        item = self.tabla_usuarios.item(seleccion[0])
+        valores = item['values']
+
+        self.usuario_id = valores[0]
+        self.user_nombre.delete(0, tk.END)
+        self.user_nombre.insert(0, valores[1])
+        self.user_password.delete(0, tk.END)
+        self.user_password.insert(0, valores[2])
+        self.user_rol.set(valores[3])
     # ===== OTROS MÉTODOS =====
     
     def logout(self):
