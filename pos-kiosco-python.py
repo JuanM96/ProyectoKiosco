@@ -12,7 +12,7 @@ class KioscoPOS:
         self.root.title("Sistema POS - Kiosco Argentina")
         self.root.geometry("1200x700")
         self.root.configure(bg='#f0f0f0')
-        
+        self.root.iconbitmap(os.path.join("img", "kiosco.ico"))
         # Usuario actual
         self.usuario_actual = None
         
@@ -61,7 +61,8 @@ class KioscoPOS:
                 usuario TEXT NOT NULL,
                 metodo_pago TEXT NOT NULL,
                 total REAL NOT NULL,
-                costo_total REAL NOT NULL
+                costo_total REAL NOT NULL,
+                turno TEXT NOT NULL
             )
         ''')
         
@@ -218,9 +219,11 @@ class KioscoPOS:
         self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
         
         # Crear pestañas
-        self.crear_pestaña_venta()
-
-        if self.usuario_actual['rol'] == 'admin':
+        self.turno_actual = None
+        if self.usuario_actual['rol'] == 'empleado':
+            self.seleccionar_turno()
+        else:
+            self.crear_pestaña_venta()
             self.crear_pestaña_usuarios()
             self.crear_pestaña_productos()
             self.crear_pestaña_reportes()
@@ -606,7 +609,7 @@ class KioscoPOS:
         
         self.tabla_ventas = ttk.Treeview(
             frame_tabla_ventas,
-            columns=('ID', 'Fecha', 'Usuario', 'Método', 'Total', 'Ganancia'),
+            columns=('ID', 'Fecha', 'Usuario', 'Método', 'Total', 'Ganancia', 'Turno'),
             show='headings',
             yscrollcommand=scrollbar_ventas.set
         )
@@ -617,13 +620,15 @@ class KioscoPOS:
         self.tabla_ventas.heading('Método', text='Método Pago')
         self.tabla_ventas.heading('Total', text='Total')
         self.tabla_ventas.heading('Ganancia', text='Ganancia')
-        
+        self.tabla_ventas.heading('Turno', text='Turno')
+
         self.tabla_ventas.column('ID', width=50)
         self.tabla_ventas.column('Fecha', width=150)
         self.tabla_ventas.column('Usuario', width=150)
         self.tabla_ventas.column('Método', width=120)
         self.tabla_ventas.column('Total', width=100)
         self.tabla_ventas.column('Ganancia', width=100)
+        self.tabla_ventas.column('Turno', width=80)
         
         self.tabla_ventas.pack(side='left', fill='both', expand=True)
         scrollbar_ventas.config(command=self.tabla_ventas.yview)
@@ -669,6 +674,25 @@ class KioscoPOS:
             bg='#0ea5e9',
             fg='white',
             command=self.exportar_ventas_dia_excel,
+            cursor='hand2'
+        ).pack(side='left', padx=5)
+        
+        tk.Label(
+            frame_exportar,
+            text="Turno:",
+            font=('Arial', 10),
+            bg='white'
+        ).pack(side='left', padx=5)
+        self.combo_turno_reporte = ttk.Combobox(frame_exportar, values=['', 'MAÑANA', 'TARDE', 'NOCHE'], width=10, state='readonly')
+        self.combo_turno_reporte.pack(side='left', padx=5)
+        self.combo_turno_reporte.set('')
+        tk.Button(
+            frame_exportar,
+            text="Filtrar",
+            font=('Arial', 10),
+            bg='#2563eb',
+            fg='white',
+            command=self.actualizar_tabla_ventas,
             cursor='hand2'
         ).pack(side='left', padx=5)
                 
@@ -933,6 +957,13 @@ class KioscoPOS:
             VALUES (?, ?, ?, ?, ?)
         ''', (fecha, self.usuario_actual['nombre'], metodo_pago, total, costo_total))
         
+        # Registrar turno si aplica
+        turno = self.turno_actual if hasattr(self, 'turno_actual') and self.turno_actual else 'MAÑANA'
+        self.cursor.execute('''
+            INSERT INTO ventas (fecha, usuario, metodo_pago, total, costo_total, turno)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (fecha, self.usuario_actual['nombre'], metodo_pago, total, costo_total, turno))
+
         venta_id = self.cursor.lastrowid
         
         # Registrar items de la venta
@@ -1025,7 +1056,6 @@ class KioscoPOS:
             
         except Exception as e:
             messagebox.showerror("Error", f"Error al generar ticket: {str(e)}")
-# ...existing code...
     
     # ===== MÉTODOS DE PRODUCTOS =====
     
@@ -1242,25 +1272,38 @@ class KioscoPOS:
         
         self.label_mes_total.config(text=f"${ventas_mes[1]:.2f}")
         self.label_mes_ventas.config(text=f"{ventas_mes[0]} ventas")
-        self.label_mes_ganancia.config(text=f"Ganancia: ${ventas_mes[2]:.2f}")
+        self.label_mes_ganancia.config(text="Ganancia: ${:.2f}".format(ventas_mes[2]))
         
         self.label_anio_total.config(text=f"${ventas_anio[1]:.2f}")
         self.label_anio_ventas.config(text=f"{ventas_anio[0]} ventas")
-        self.label_anio_ganancia.config(text=f"Ganancia: ${ventas_anio[2]:.2f}")
+        self.label_anio_ganancia.config(text="Ganancia: ${:.2f}".format(ventas_anio[2]))
         
         self.actualizar_tabla_ventas()
     
     def actualizar_tabla_ventas(self):
-        """Actualiza la tabla de ventas"""
+        """Actualiza la tabla de ventas con filtro por turno y fecha"""
         for item in self.tabla_ventas.get_children():
             self.tabla_ventas.delete(item)
         
-        self.cursor.execute('SELECT * FROM ventas ORDER BY fecha DESC LIMIT 100')
+        fecha = self.entry_fecha_reporte.get()
+        turno = self.combo_turno_reporte.get()
+        query = 'SELECT * FROM ventas'
+        params = []
+        where = []
+        if fecha:
+            where.append('DATE(fecha) = ?')
+            params.append(fecha)
+        if turno:
+            where.append('turno = ?')
+            params.append(turno)
+        if where:
+            query += ' WHERE ' + ' AND '.join(where)
+        query += ' ORDER BY fecha DESC LIMIT 100'
+        self.cursor.execute(query, params)
         ventas = self.cursor.fetchall()
-        
         for venta in ventas:
             ganancia = venta[4] - venta[5]
-            valores = (venta[0], venta[1], venta[2], venta[3], f'${venta[4]:.2f}', f'${ganancia:.2f}')
+            valores = (venta[0], venta[1], venta[2], venta[3], f'${venta[4]:.2f}', f'${ganancia:.2f}', venta[6])
             self.tabla_ventas.insert('', 'end', values=valores)
     
     def exportar_todo_excel(self):
@@ -1280,10 +1323,10 @@ class KioscoPOS:
                     df_productos = pd.DataFrame(productos, columns=['ID', 'Nombre', 'Precio', 'Costo', 'Stock', 'Categoría', 'Código Barras'])
                     df_productos.to_excel(writer, sheet_name='Productos', index=False)
                     
-                    # Ventas
+                    # Ventas (agrega columna Turno)
                     self.cursor.execute('SELECT * FROM ventas')
                     ventas = self.cursor.fetchall()
-                    df_ventas = pd.DataFrame(ventas, columns=['ID', 'Fecha', 'Usuario', 'Método Pago', 'Total', 'Costo Total'])
+                    df_ventas = pd.DataFrame(ventas, columns=['ID', 'Fecha', 'Usuario', 'Método Pago', 'Total', 'Costo Total', 'Turno'])
                     df_ventas['Ganancia'] = df_ventas['Total'] - df_ventas['Costo Total']
                     df_ventas.to_excel(writer, sheet_name='Ventas', index=False)
                     
@@ -1314,8 +1357,8 @@ class KioscoPOS:
                         'Ganancia': [resumen_hoy[2] or 0, resumen_mes[2] or 0, resumen_anio[2] or 0]
                     })
                     df_resumen.to_excel(writer, sheet_name='Resumen', index=False)
-                
-                messagebox.showinfo("Éxito", f"Reporte completo exportado a: {filename}")
+            
+            messagebox.showinfo("Éxito", f"Reporte completo exportado a: {filename}")
         except Exception as e:
             messagebox.showerror("Error", f"Error al exportar: {str(e)}")
     def exportar_ventas_dia_excel(self):
@@ -1337,7 +1380,7 @@ class KioscoPOS:
                     SELECT * FROM ventas WHERE DATE(fecha) = ?
                 ''', (fecha,))
                 ventas = self.cursor.fetchall()
-                df_ventas = pd.DataFrame(ventas, columns=['ID', 'Fecha', 'Usuario', 'Método Pago', 'Total', 'Costo Total'])
+                df_ventas = pd.DataFrame(ventas, columns=['ID', 'Fecha', 'Usuario', 'Método Pago', 'Total', 'Costo Total', 'Turno'])
                 df_ventas['Ganancia'] = df_ventas['Total'] - df_ventas['Costo Total']
 
                 # Items de ventas del día
@@ -1466,6 +1509,41 @@ class KioscoPOS:
             for widget in self.root.winfo_children():
                 widget.destroy()
             self.mostrar_login()
+    
+    def seleccionar_turno(self):
+        """Solicita al empleado seleccionar el turno antes de mostrar el punto de venta"""
+        turno_win = tk.Toplevel(self.root)
+        turno_win.title("Seleccionar Turno")
+        turno_win.geometry("400x300")
+        turno_win.resizable(False, False)
+        turno_win.grab_set()
+        turno_win.transient(self.root)
+
+        # Centrar ventana
+        turno_win.update_idletasks()
+        x = (turno_win.winfo_screenwidth() // 2) - (400 // 2)
+        y = (turno_win.winfo_screenheight() // 2) - (300 // 2)
+        turno_win.geometry(f"+{x}+{y}")
+
+        # Deshabilitar botón de cerrar
+        turno_win.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        tk.Label(turno_win, text="Selecciona el turno:", font=('Arial', 18, 'bold')).pack(pady=15)
+        turno_var = tk.StringVar()
+        turno_var.set('MAÑANA')
+        for t in ['MAÑANA', 'TARDE', 'NOCHE']:
+            tk.Radiobutton(turno_win, text=t, variable=turno_var, value=t, font=('Arial', 14)).pack(anchor='w', padx=80, pady=10)
+
+        def confirmar():
+            if not turno_var.get():
+                messagebox.showwarning("Turno", "Debes seleccionar un turno")
+                return
+            self.turno_actual = turno_var.get()
+            turno_win.grab_release()
+            turno_win.destroy()
+            self.crear_pestaña_venta()
+
+        tk.Button(turno_win, text="Confirmar", font=('Arial', 14, 'bold'), bg='#2563eb', fg='white', command=confirmar, width=15, height=2).pack(pady=10)
     
     def __del__(self):
         """Cierra la conexión a la base de datos"""
