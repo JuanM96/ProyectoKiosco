@@ -219,7 +219,7 @@ class KioscoPOS:
         
         # Crear pestañas
         self.crear_pestaña_venta()
-        
+
         if self.usuario_actual['rol'] == 'admin':
             self.crear_pestaña_usuarios()
             self.crear_pestaña_productos()
@@ -963,6 +963,11 @@ class KioscoPOS:
     def generar_ticket(self, venta_id, metodo_pago, total):
         """Genera un ticket PDF de la venta"""
         try:
+            # Crear carpeta 'tickets' si no existe
+            carpeta_tickets = "tickets"
+            if not os.path.exists(carpeta_tickets):
+                os.makedirs(carpeta_tickets)
+
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font('Arial', 'B', 16)
@@ -1013,13 +1018,14 @@ class KioscoPOS:
             pdf.set_font('Arial', 'I', 8)
             pdf.cell(0, 5, 'Gracias por su compra!', 0, 1, 'C')
             
-            # Guardar
-            filename = f'ticket_{venta_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf'
+            # Guardar en subcarpeta 'tickets'
+            filename = os.path.join(carpeta_tickets, f'ticket_{venta_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf')
             pdf.output(filename)
             messagebox.showinfo("Ticket Generado", f"Ticket guardado como: {filename}")
             
         except Exception as e:
             messagebox.showerror("Error", f"Error al generar ticket: {str(e)}")
+# ...existing code...
     
     # ===== MÉTODOS DE PRODUCTOS =====
     
