@@ -11,7 +11,7 @@ class KioscoPOS:
         self.root = root
         self.root.title("Sistema POS - Kiosco Argentina")
         self.root.geometry("1200x700")
-        self.root.configure(bg='#f0f0f0')
+        self.root.configure(bg="#FAF2E3")
         self.root.iconbitmap(os.path.join("img", "kiosco.ico"))
         # Usuario actual
         self.usuario_actual = None
@@ -104,7 +104,7 @@ class KioscoPOS:
     
     def mostrar_login(self):
         """Muestra la ventana de login"""
-        self.login_frame = tk.Frame(self.root, bg='#f0f0f0')
+        self.login_frame = tk.Frame(self.root, bg='#FAF2E3')
         self.login_frame.place(relx=0.5, rely=0.5, anchor='center')
         
         # Logo/Título
@@ -112,7 +112,7 @@ class KioscoPOS:
             self.login_frame, 
             text="Sistema POS - Kiosco", 
             font=('Arial', 24, 'bold'),
-            bg='#f0f0f0',
+            bg='#FAF2E3',
             fg='#2563eb'
         ).pack(pady=20)
         
@@ -121,7 +121,7 @@ class KioscoPOS:
             self.login_frame, 
             text="Usuario:", 
             font=('Arial', 12),
-            bg='#f0f0f0'
+            bg='#FAF2E3'
         ).pack(pady=5)
         
         self.entry_usuario = tk.Entry(self.login_frame, font=('Arial', 12), width=25)
@@ -132,7 +132,7 @@ class KioscoPOS:
             self.login_frame, 
             text="Contraseña:", 
             font=('Arial', 12),
-            bg='#f0f0f0'
+            bg='#FAF2E3'
         ).pack(pady=5)
         
         self.entry_password = tk.Entry(self.login_frame, font=('Arial', 12), width=25, show='*')
@@ -156,7 +156,7 @@ class KioscoPOS:
             self.login_frame,
             text="Usuario demo: Administrador / admin123",
             font=('Arial', 9),
-            bg='#f0f0f0',
+            bg='#FAF2E3',
             fg='gray'
         ).pack()
     
@@ -185,14 +185,14 @@ class KioscoPOS:
     def mostrar_interfaz_principal(self):
         """Muestra la interfaz principal del sistema"""
         # Header
-        header = tk.Frame(self.root, bg='#2563eb', height=60)
+        header = tk.Frame(self.root, bg='#D94A2B', height=60)
         header.pack(fill='x')
         
         tk.Label(
             header,
             text="Sistema POS - Kiosco",
             font=('Arial', 18, 'bold'),
-            bg='#2563eb',
+            bg='#D94A2B',
             fg='white'
         ).pack(side='left', padx=20, pady=10)
         
@@ -200,7 +200,7 @@ class KioscoPOS:
             header,
             text=f"👤 {self.usuario_actual['nombre']}",
             font=('Arial', 11),
-            bg='#2563eb',
+            bg='#D94A2B',
             fg='white'
         ).pack(side='right', padx=10)
         
@@ -230,34 +230,34 @@ class KioscoPOS:
     
     def crear_pestaña_venta(self):
         """Crea la pestaña de punto de venta"""
-        frame_venta = tk.Frame(self.notebook, bg='white')
+        frame_venta = tk.Frame(self.notebook, bg='#FAF2E3')
         self.notebook.add(frame_venta, text='🛒 Punto de Venta')
         
         # Frame izquierdo - Búsqueda de productos
-        frame_izq = tk.Frame(frame_venta, bg='white')
+        frame_izq = tk.Frame(frame_venta, bg='#FAF2E3')
         frame_izq.pack(side='left', fill='both', expand=True, padx=10, pady=10)
         
         tk.Label(
             frame_izq,
             text="Buscar Productos",
             font=('Arial', 14, 'bold'),
-            bg='white'
+            bg='#FAF2E3'
         ).pack(pady=5)
         
         # Búsqueda por nombre
-        tk.Label(frame_izq, text="Buscar por nombre o categoría:", bg='white').pack(pady=5)
+        tk.Label(frame_izq, text="Buscar por nombre o categoría:", bg='#FAF2E3').pack(pady=5)
         self.entry_buscar = tk.Entry(frame_izq, font=('Arial', 11), width=40)
         self.entry_buscar.pack(pady=5)
         self.entry_buscar.bind('<KeyRelease>', lambda e: self.actualizar_lista_productos())
         
         # Búsqueda por código de barras
-        tk.Label(frame_izq, text="Código de barras (presiona Enter):", bg='white').pack(pady=5)
+        tk.Label(frame_izq, text="Código de barras (presiona Enter):", bg='#FAF2E3').pack(pady=5)
         self.entry_barcode = tk.Entry(frame_izq, font=('Arial', 11), width=40)
         self.entry_barcode.pack(pady=5)
         self.entry_barcode.bind('<Return>', self.buscar_por_barcode)
         
         # Lista de productos
-        frame_lista = tk.Frame(frame_izq, bg='white')
+        frame_lista = tk.Frame(frame_izq, bg='#FAF2E3')
         frame_lista.pack(fill='both', expand=True, pady=10)
         
         scrollbar = tk.Scrollbar(frame_lista)
@@ -285,7 +285,7 @@ class KioscoPOS:
         ).pack(pady=10)
         
         # Frame derecho - Carrito
-        frame_der = tk.Frame(frame_venta, bg='white', width=400)
+        frame_der = tk.Frame(frame_venta, bg='#FAF2E3', width=400)
         frame_der.pack(side='right', fill='both', padx=10, pady=10)
         frame_der.pack_propagate(False)
         
@@ -293,11 +293,11 @@ class KioscoPOS:
             frame_der,
             text="Carrito de Venta",
             font=('Arial', 14, 'bold'),
-            bg='white'
+            bg='#FAF2E3'
         ).pack(pady=5)
         
         # Lista del carrito
-        frame_carrito = tk.Frame(frame_der, bg='white')
+        frame_carrito = tk.Frame(frame_der, bg='#FAF2E3')
         frame_carrito.pack(fill='both', expand=True, pady=10)
         
         scrollbar_carrito = tk.Scrollbar(frame_carrito)
@@ -312,7 +312,7 @@ class KioscoPOS:
         scrollbar_carrito.config(command=self.lista_carrito.yview)
         
         # Botones de carrito
-        frame_botones = tk.Frame(frame_der, bg='white')
+        frame_botones = tk.Frame(frame_der, bg='#FAF2E3')
         frame_botones.pack(fill='x', pady=5)
         
         tk.Button(
@@ -340,7 +340,7 @@ class KioscoPOS:
             frame_der,
             text="TOTAL: $0",
             font=('Arial', 18, 'bold'),
-            bg='white',
+            bg='#FAF2E3',
             fg='#2563eb'
         )
         self.label_total.pack(pady=10)
@@ -350,7 +350,7 @@ class KioscoPOS:
             frame_der,
             text="Método de Pago:",
             font=('Arial', 11, 'bold'),
-            bg='white'
+            bg='#FAF2E3'
         ).pack(pady=5)
         
         metodos = ['Efectivo', 'Transferencia', 'Débito', 'Crédito']
@@ -370,11 +370,11 @@ class KioscoPOS:
     
     def crear_pestaña_productos(self):
         """Crea la pestaña de gestión de productos"""
-        frame_productos = tk.Frame(self.notebook, bg='white')
+        frame_productos = tk.Frame(self.notebook, bg='#FAF2E3')
         self.notebook.add(frame_productos, text='📦 Productos')
         
         # Frame izquierdo - Formulario
-        frame_form = tk.Frame(frame_productos, bg='white', width=350)
+        frame_form = tk.Frame(frame_productos, bg='#FAF2E3', width=350)
         frame_form.pack(side='left', fill='y', padx=10, pady=10)
         frame_form.pack_propagate(False)
         
@@ -382,29 +382,29 @@ class KioscoPOS:
             frame_form,
             text="Agregar/Editar Producto",
             font=('Arial', 14, 'bold'),
-            bg='white'
+            bg='#FAF2E3'
         ).pack(pady=10)
         
         # Campos del formulario
         self.producto_id = None
         
-        tk.Label(frame_form, text="Nombre:", bg='white').pack(pady=2)
+        tk.Label(frame_form, text="Nombre:", bg='#FAF2E3').pack(pady=2)
         self.prod_nombre = tk.Entry(frame_form, font=('Arial', 11), width=30)
         self.prod_nombre.pack(pady=2)
         
-        tk.Label(frame_form, text="Precio de Venta ($):", bg='white').pack(pady=2)
+        tk.Label(frame_form, text="Precio de Venta ($):", bg='#FAF2E3').pack(pady=2)
         self.prod_precio = tk.Entry(frame_form, font=('Arial', 11), width=30)
         self.prod_precio.pack(pady=2)
         
-        tk.Label(frame_form, text="Costo ($):", bg='white').pack(pady=2)
+        tk.Label(frame_form, text="Costo ($):", bg='#FAF2E3').pack(pady=2)
         self.prod_costo = tk.Entry(frame_form, font=('Arial', 11), width=30)
         self.prod_costo.pack(pady=2)
         
-        tk.Label(frame_form, text="Stock:", bg='white').pack(pady=2)
+        tk.Label(frame_form, text="Stock:", bg='#FAF2E3').pack(pady=2)
         self.prod_stock = tk.Entry(frame_form, font=('Arial', 11), width=30)
         self.prod_stock.pack(pady=2)
         
-        tk.Label(frame_form, text="Categoría:", bg='white').pack(pady=2)
+        tk.Label(frame_form, text="Categoría:", bg='#FAF2E3').pack(pady=2)
         self.prod_categoria = ttk.Combobox(
             frame_form,
             font=('Arial', 11),
@@ -413,12 +413,12 @@ class KioscoPOS:
         )
         self.prod_categoria.pack(pady=2)
         
-        tk.Label(frame_form, text="Código de Barras:", bg='white').pack(pady=2)
+        tk.Label(frame_form, text="Código de Barras:", bg='#FAF2E3').pack(pady=2)
         self.prod_barcode = tk.Entry(frame_form, font=('Arial', 11), width=30)
         self.prod_barcode.pack(pady=2)
         
         # Botones
-        frame_botones_prod = tk.Frame(frame_form, bg='white')
+        frame_botones_prod = tk.Frame(frame_form, bg='#FAF2E3')
         frame_botones_prod.pack(pady=20)
         
         tk.Button(
@@ -444,18 +444,18 @@ class KioscoPOS:
         ).pack(side='left', padx=5)
         
         # Frame derecho - Lista de productos
-        frame_lista_prod = tk.Frame(frame_productos, bg='white')
+        frame_lista_prod = tk.Frame(frame_productos, bg='#FAF2E3')
         frame_lista_prod.pack(side='right', fill='both', expand=True, padx=10, pady=10)
         
         tk.Label(
             frame_lista_prod,
             text="Inventario de Productos",
             font=('Arial', 14, 'bold'),
-            bg='white'
+            bg='#FAF2E3'
         ).pack(pady=10)
         
         # Tabla de productos
-        frame_tabla = tk.Frame(frame_lista_prod, bg='white')
+        frame_tabla = tk.Frame(frame_lista_prod, bg='#FAF2E3')
         frame_tabla.pack(fill='both', expand=True)
         
         scrollbar_tabla = tk.Scrollbar(frame_tabla)
@@ -490,7 +490,7 @@ class KioscoPOS:
         self.tabla_productos.bind('<Double-Button-1>', self.editar_producto)
         
         # Botones de acción
-        frame_acciones = tk.Frame(frame_lista_prod, bg='white')
+        frame_acciones = tk.Frame(frame_lista_prod, bg='#FAF2E3')
         frame_acciones.pack(fill='x', pady=10)
         
         tk.Button(
@@ -536,22 +536,22 @@ class KioscoPOS:
     
     def crear_pestaña_reportes(self):
         """Crea la pestaña de reportes"""
-        frame_reportes = tk.Frame(self.notebook, bg='white')
+        frame_reportes = tk.Frame(self.notebook, bg='#FAF2E3')
         self.notebook.add(frame_reportes, text='📊 Reportes')
         
         # Frame superior - Resumen
-        frame_resumen = tk.Frame(frame_reportes, bg='white')
+        frame_resumen = tk.Frame(frame_reportes, bg='#FAF2E3')
         frame_resumen.pack(fill='x', padx=10, pady=10)
         
         tk.Label(
             frame_resumen,
             text="Resumen de Ventas",
             font=('Arial', 16, 'bold'),
-            bg='white'
+            bg='#FAF2E3'
         ).pack(pady=10)
         
         # Tarjetas de resumen
-        frame_tarjetas = tk.Frame(frame_resumen, bg='white')
+        frame_tarjetas = tk.Frame(frame_resumen, bg='#FAF2E3')
         frame_tarjetas.pack(fill='x', pady=10)
         
         # Calcular estadísticas
@@ -598,10 +598,10 @@ class KioscoPOS:
             frame_reportes,
             text="Historial de Ventas",
             font=('Arial', 14, 'bold'),
-            bg='white'
+            bg='#FAF2E3'
         ).pack(pady=10)
         
-        frame_tabla_ventas = tk.Frame(frame_reportes, bg='white')
+        frame_tabla_ventas = tk.Frame(frame_reportes, bg='#FAF2E3')
         frame_tabla_ventas.pack(fill='both', expand=True, padx=10, pady=10)
         
         scrollbar_ventas = tk.Scrollbar(frame_tabla_ventas)
@@ -634,7 +634,7 @@ class KioscoPOS:
         scrollbar_ventas.config(command=self.tabla_ventas.yview)
         
         # Botones de exportación
-        frame_exportar = tk.Frame(frame_reportes, bg='white')
+        frame_exportar = tk.Frame(frame_reportes, bg='#FAF2E3')
         frame_exportar.pack(fill='x', padx=10, pady=10)
         
         tk.Button(
@@ -661,7 +661,7 @@ class KioscoPOS:
             frame_exportar,
             text="Fecha (YYYY-MM-DD):",
             font=('Arial', 10),
-            bg='white'
+            bg='#FAF2E3'
         ).pack(side='left', padx=5)
 
         self.entry_fecha_reporte = tk.Entry(frame_exportar, font=('Arial', 10), width=12)
@@ -681,7 +681,7 @@ class KioscoPOS:
             frame_exportar,
             text="Turno:",
             font=('Arial', 10),
-            bg='white'
+            bg='#FAF2E3'
         ).pack(side='left', padx=5)
         self.combo_turno_reporte = ttk.Combobox(frame_exportar, values=['', 'MAÑANA', 'TARDE', 'NOCHE'], width=10, state='readonly')
         self.combo_turno_reporte.pack(side='left', padx=5)
@@ -703,11 +703,11 @@ class KioscoPOS:
     
     def crear_pestaña_usuarios(self):
         """Crea la pestaña de gestión de usuarios (solo admin)"""
-        frame_usuarios = tk.Frame(self.notebook, bg='white')
+        frame_usuarios = tk.Frame(self.notebook, bg='#FAF2E3')
         self.notebook.add(frame_usuarios, text='👥 Usuarios')
         
         # Frame izquierdo - Formulario
-        frame_form_user = tk.Frame(frame_usuarios, bg='white', width=350)
+        frame_form_user = tk.Frame(frame_usuarios, bg='#FAF2E3', width=350)
         frame_form_user.pack(side='left', fill='y', padx=10, pady=10)
         frame_form_user.pack_propagate(False)
         
@@ -715,18 +715,18 @@ class KioscoPOS:
             frame_form_user,
             text="Agregar Usuario",
             font=('Arial', 14, 'bold'),
-            bg='white'
+            bg='#FAF2E3'
         ).pack(pady=10)
         
-        tk.Label(frame_form_user, text="Nombre de Usuario:", bg='white').pack(pady=5)
+        tk.Label(frame_form_user, text="Nombre de Usuario:", bg='#FAF2E3').pack(pady=5)
         self.user_nombre = tk.Entry(frame_form_user, font=('Arial', 11), width=30)
         self.user_nombre.pack(pady=5)
         
-        tk.Label(frame_form_user, text="Contraseña:", bg='white').pack(pady=5)
+        tk.Label(frame_form_user, text="Contraseña:", bg='#FAF2E3').pack(pady=5)
         self.user_password = tk.Entry(frame_form_user, font=('Arial', 11), width=30, show='*')
         self.user_password.pack(pady=5)
         
-        tk.Label(frame_form_user, text="Rol:", bg='white').pack(pady=5)
+        tk.Label(frame_form_user, text="Rol:", bg='#FAF2E3').pack(pady=5)
         self.user_rol = ttk.Combobox(
             frame_form_user,
             font=('Arial', 11),
@@ -748,17 +748,17 @@ class KioscoPOS:
         ).pack(pady=20)
         
         # Frame derecho - Lista de usuarios
-        frame_lista_users = tk.Frame(frame_usuarios, bg='white')
+        frame_lista_users = tk.Frame(frame_usuarios, bg='#FAF2E3')
         frame_lista_users.pack(side='right', fill='both', expand=True, padx=10, pady=10)
         
         tk.Label(
             frame_lista_users,
             text="Lista de Usuarios",
             font=('Arial', 14, 'bold'),
-            bg='white'
+            bg='#FAF2E3'
         ).pack(pady=10)
         
-        frame_tabla_users = tk.Frame(frame_lista_users, bg='white')
+        frame_tabla_users = tk.Frame(frame_lista_users, bg='#FAF2E3')
         frame_tabla_users.pack(fill='both', expand=True)
         
         scrollbar_users = tk.Scrollbar(frame_tabla_users)
