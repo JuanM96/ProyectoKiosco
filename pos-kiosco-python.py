@@ -5,6 +5,7 @@ from datetime import datetime
 import pandas as pd
 from fpdf import FPDF
 import os
+import logging
 
 class KioscoPOS:
     def __init__(self, root):
@@ -24,7 +25,7 @@ class KioscoPOS:
         
         # Mostrar login
         self.mostrar_login()
-    
+        logging.basicConfig(level=logging.INFO, format='%(message)s')
     def init_database(self):
         """Inicializa la base de datos y crea las tablas"""
         self.conn = sqlite3.connect('kiosco.db')
@@ -208,7 +209,7 @@ class KioscoPOS:
             header,
             text="Cerrar Sesión",
             font=('Arial', 10),
-            bg='#1e40af',
+            bg="#d10909",
             fg='white',
             command=self.logout,
             cursor='hand2'
@@ -217,6 +218,8 @@ class KioscoPOS:
         # Notebook (pestañas)
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        self.notebook.style = ttk.Style()
+        self.notebook.style.configure('TNotebook', background='#FAF2E3')
         
         # Crear pestañas
         self.turno_actual = None
@@ -232,7 +235,7 @@ class KioscoPOS:
         """Crea la pestaña de punto de venta"""
         frame_venta = tk.Frame(self.notebook, bg='#FAF2E3')
         self.notebook.add(frame_venta, text='🛒 Punto de Venta')
-        
+
         # Frame izquierdo - Búsqueda de productos
         frame_izq = tk.Frame(frame_venta, bg='#FAF2E3')
         frame_izq.pack(side='left', fill='both', expand=True, padx=10, pady=10)
@@ -321,7 +324,7 @@ class KioscoPOS:
             font=('Arial', 10),
             bg='#dc2626',
             fg='white',
-            command=self.eliminar_del_carrito,
+            command=self.eliminar_uno_del_carrito,
             cursor='hand2'
         ).pack(side='left', padx=5)
         
@@ -930,10 +933,33 @@ class KioscoPOS:
         if not seleccion:
             messagebox.showwarning("Selección", "Por favor selecciona un item del carrito")
             return
-        
+        print(self.carrito[seleccion[0]]['id'])
+        #logging.info(seleccion.id)
+        # messagebox.showwarning(seleccion[0])
         del self.carrito[seleccion[0]]
         self.actualizar_carrito_display()
-    
+
+    def eliminar_uno_del_carrito(self):
+        """Elimina el item seleccionado del carrito"""
+        seleccion = self.lista_carrito.curselection()
+        if not seleccion:
+            messagebox.showwarning("Selección", "Por favor selecciona un item del carrito")
+            return
+        logging.INFO(self.lista_carrito.get(0))
+        #for item in self.lista_carrito:
+        #     if item['id'] == self.carrito[seleccion[0]]['id']:
+        #         if item['cantidad'] > 1:
+        #             item['cantidad'] - 1
+        #         else:
+        #             del self.carrito[seleccion[0]]
+        #     print(item)
+        #     print("item id")
+        #     print(item['id'])
+        #     print("self carrito")
+        #     print(self.carrito[seleccion[0]]['id'])
+            # self.actualizar_carrito_display()
+            # return
+
     def vaciar_carrito(self):
         """Vacía completamente el carrito"""
         if self.carrito and messagebox.askyesno("Confirmar", "¿Vaciar el carrito?"):
