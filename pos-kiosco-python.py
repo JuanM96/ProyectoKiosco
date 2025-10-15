@@ -6,6 +6,7 @@ import pandas as pd
 from fpdf import FPDF
 import os
 import logging
+from PIL import Image, ImageTk
 
 class KioscoPOS:
     def __init__(self, root):
@@ -107,15 +108,28 @@ class KioscoPOS:
         """Muestra la ventana de login"""
         self.login_frame = tk.Frame(self.root, bg='#FAF2E3')
         self.login_frame.place(relx=0.5, rely=0.5, anchor='center')
-        
+
+        try:
+            ruta_logo = os.path.join("img", "kioscoimg.png")
+            imagen_logo = Image.open(ruta_logo)
+            imagen_logo = imagen_logo.resize((350, 350))  # tamaño ajustable
+            self.logo_img = ImageTk.PhotoImage(imagen_logo)
+            tk.Label(
+                self.login_frame,
+                image=self.logo_img,
+                bg='#FAF2E3'
+            ).pack(pady=5)
+        except Exception as e:
+            print("No se pudo cargar el logo:", e)
+
         # Logo/Título
-        tk.Label(
-            self.login_frame, 
-            text="Sistema POS - Kiosco", 
-            font=('Arial', 24, 'bold'),
-            bg='#FAF2E3',
-            fg='#2563eb'
-        ).pack(pady=20)
+        # tk.Label(
+        #     self.login_frame, 
+        #     text="Sistema POS - Kiosco", 
+        #     font=('Arial', 24, 'bold'),
+        #     bg='#FAF2E3',
+        #     fg='#2563eb'
+        # ).pack(pady=20)
         
         # Usuario
         tk.Label(
@@ -153,13 +167,13 @@ class KioscoPOS:
         ).pack(pady=20)
         
         # Texto ayuda
-        tk.Label(
-            self.login_frame,
-            text="Usuario demo: Administrador / admin123",
-            font=('Arial', 9),
-            bg='#FAF2E3',
-            fg='gray'
-        ).pack()
+        # tk.Label(
+        #     self.login_frame,
+        #     text="Usuario demo: Administrador / admin123",
+        #     font=('Arial', 9),
+        #     bg='#FAF2E3',
+        #     fg='gray'
+        # ).pack()
     
     def login(self):
         """Procesa el login del usuario"""
@@ -324,10 +338,20 @@ class KioscoPOS:
             font=('Arial', 10),
             bg='#dc2626',
             fg='white',
+            command=self.eliminar_del_carrito,
+            cursor='hand2'
+        ).pack(side='left', padx=5)
+
+        tk.Button(
+            frame_botones,
+            text="Eliminar Unidad",
+            font=('Arial', 10),
+            bg='#dc2626',
+            fg='white',
             command=self.eliminar_uno_del_carrito,
             cursor='hand2'
         ).pack(side='left', padx=5)
-        
+
         tk.Button(
             frame_botones,
             text="Vaciar Carrito",
@@ -337,7 +361,17 @@ class KioscoPOS:
             command=self.vaciar_carrito,
             cursor='hand2'
         ).pack(side='left', padx=5)
-        
+
+        tk.Button(
+            frame_botones,
+            text="Restar Stock",
+            font=('Arial', 10),
+            bg='#f59e0b',
+            fg='white',
+            command=self.restar_stock_interno,
+            cursor='hand2'
+        ).pack(side='left', padx=5)
+
         # Total
         self.label_total = tk.Label(
             frame_der,
@@ -945,20 +979,19 @@ class KioscoPOS:
         if not seleccion:
             messagebox.showwarning("Selección", "Por favor selecciona un item del carrito")
             return
-        logging.INFO(self.lista_carrito.get(0))
-        #for item in self.lista_carrito:
-        #     if item['id'] == self.carrito[seleccion[0]]['id']:
-        #         if item['cantidad'] > 1:
-        #             item['cantidad'] - 1
-        #         else:
-        #             del self.carrito[seleccion[0]]
-        #     print(item)
-        #     print("item id")
-        #     print(item['id'])
-        #     print("self carrito")
-        #     print(self.carrito[seleccion[0]]['id'])
-            # self.actualizar_carrito_display()
-            # return
+        index = seleccion[0]
+        producto = self.carrito[index]
+
+        # Restar una unidad
+        producto["cantidad"] -= 1
+
+        # Si llega a 0, eliminar completamente
+        if producto["cantidad"] <= 0:
+            del self.carrito[index]
+
+        # Actualizar la interfaz
+        self.actualizar_carrito_display()
+        self.lista_carrito.selection_set(index)
 
     def vaciar_carrito(self):
         """Vacía completamente el carrito"""
@@ -966,6 +999,27 @@ class KioscoPOS:
             self.carrito = []
             self.actualizar_carrito_display()
     
+    def restar_stock_interno(self):
+        """Resta stock usando los productos del carrito sin registrar una venta."""
+        if not self.carrito:
+            messagebox.showwarning("Carrito vacío", "No hay productos en el carrito para restar stock.")
+            return
+
+        if not messagebox.askyesno("Confirmar", "¿Deseas restar el stock de los productos del carrito sin registrar una venta?"):
+            return
+
+        for item in self.carrito:
+            self.cursor.execute('''
+                UPDATE productos SET stock = stock - ? WHERE id = ?
+            ''', (item['cantidad'], item['id']))
+
+        self.conn.commit()
+
+        self.carrito = []
+        self.actualizar_carrito_display()
+        self.actualizar_lista_productos()
+
+        messagebox.showinfo("Stock actualizado", "El stock fue actualizado correctamente (sin registrar venta).")
     def finalizar_venta(self, metodo_pago):
         """Finaliza la venta y la registra"""
         if not self.carrito:
