@@ -219,11 +219,11 @@ class KioscoPOS:
         
         # Crear pestañas
         self.crear_pestaña_venta()
-        self.crear_pestaña_productos()
-        self.crear_pestaña_reportes()
         
         if self.usuario_actual['rol'] == 'admin':
             self.crear_pestaña_usuarios()
+            self.crear_pestaña_productos()
+            self.crear_pestaña_reportes()
     
     def crear_pestaña_venta(self):
         """Crea la pestaña de punto de venta"""
