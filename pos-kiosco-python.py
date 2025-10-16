@@ -14,7 +14,10 @@ class KioscoPOS:
         self.root.title("Sistema POS - Kiosco Argentina")
         self.root.geometry("1200x700")
         self.root.configure(bg="#FAF2E3")
-        self.root.iconbitmap(os.path.join("img", "kiosco.ico"))
+        #self.root.iconbitmap(os.path.join("img", "kiosco.ico"))
+        
+        base_path = os.path.dirname(__file__)
+        self.root.iconbitmap(os.path.join(base_path, "img", "kiosco.ico"))
         # Usuario actual
         self.usuario_actual = None
         
