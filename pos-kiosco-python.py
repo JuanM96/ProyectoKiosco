@@ -84,6 +84,14 @@ class KioscoPOS:
             )
         ''')
         
+        # Tabla de configuración
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS configuracion (
+                clave TEXT PRIMARY KEY,
+                valor TEXT NOT NULL
+            )
+        ''')
+        
         # Insertar usuario admin por defecto si no existe
         self.cursor.execute("SELECT * FROM usuarios WHERE nombre = 'Administrador'")
         if not self.cursor.fetchone():
@@ -105,7 +113,33 @@ class KioscoPOS:
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', productos_ejemplo)
         
+        # Insertar configuración por defecto
+        self.cursor.execute("SELECT * FROM configuracion WHERE clave = 'stock_habilitado'")
+        if not self.cursor.fetchone():
+            self.cursor.execute('''
+                INSERT INTO configuracion (clave, valor) 
+                VALUES ('stock_habilitado', '1')
+            ''')
+        
         self.conn.commit()
+    
+    def get_configuracion(self, clave, default='1'):
+        """Obtiene un valor de configuración"""
+        self.cursor.execute("SELECT valor FROM configuracion WHERE clave = ?", (clave,))
+        result = self.cursor.fetchone()
+        return result[0] if result else default
+    
+    def set_configuracion(self, clave, valor):
+        """Establece un valor de configuración"""
+        self.cursor.execute('''
+            INSERT OR REPLACE INTO configuracion (clave, valor)
+            VALUES (?, ?)
+        ''', (clave, valor))
+        self.conn.commit()
+    
+    def stock_habilitado(self):
+        """Verifica si el stock está habilitado"""
+        return self.get_configuracion('stock_habilitado') == '1'
     
     def mostrar_login(self):
         """Muestra la ventana de login"""
@@ -365,7 +399,8 @@ class KioscoPOS:
             cursor='hand2'
         ).pack(side='left', padx=5)
 
-        tk.Button(
+        # Botón para restar stock (solo si está habilitado)
+        self.btn_restar_stock = tk.Button(
             frame_botones,
             text="Restar Stock",
             font=('Arial', 10),
@@ -373,7 +408,9 @@ class KioscoPOS:
             fg='white',
             command=self.restar_stock_interno,
             cursor='hand2'
-        ).pack(side='left', padx=5)
+        )
+        if self.stock_habilitado():
+            self.btn_restar_stock.pack(side='left', padx=5)
 
         # Total
         self.label_total = tk.Label(
@@ -413,8 +450,45 @@ class KioscoPOS:
         frame_productos = tk.Frame(self.notebook, bg='#FAF2E3')
         self.notebook.add(frame_productos, text='📦 Productos')
         
+        # Frame superior - Configuración
+        frame_config = tk.Frame(frame_productos, bg='#E3F2FD', relief='raised', bd=2)
+        frame_config.pack(fill='x', padx=10, pady=5)
+        
+        tk.Label(
+            frame_config,
+            text="⚙️ Configuración de Stock",
+            font=('Arial', 12, 'bold'),
+            bg='#E3F2FD'
+        ).pack(side='left', padx=10, pady=5)
+        
+        # Variable para el checkbox de stock
+        self.stock_var = tk.BooleanVar()
+        self.stock_var.set(self.stock_habilitado())
+        
+        self.stock_checkbox = tk.Checkbutton(
+            frame_config,
+            text="Habilitar control de stock",
+            variable=self.stock_var,
+            font=('Arial', 10),
+            bg='#E3F2FD',
+            command=self.confirmar_toggle_stock
+        )
+        self.stock_checkbox.pack(side='left', padx=10, pady=5)
+        
+        tk.Label(
+            frame_config,
+            text="ℹ️ Desactivar esta opción eliminará las validaciones y descuentos de stock",
+            font=('Arial', 9),
+            bg='#E3F2FD',
+            fg='gray'
+        ).pack(side='left', padx=10, pady=5)
+        
+        # Frame contenedor para formulario y tabla
+        frame_contenedor = tk.Frame(frame_productos, bg='#FAF2E3')
+        frame_contenedor.pack(fill='both', expand=True, padx=10, pady=5)
+        
         # Frame izquierdo - Formulario
-        frame_form = tk.Frame(frame_productos, bg='#FAF2E3', width=350)
+        frame_form = tk.Frame(frame_contenedor, bg='#FAF2E3', width=350)
         frame_form.pack(side='left', fill='y', padx=10, pady=10)
         frame_form.pack_propagate(False)
         
@@ -440,7 +514,9 @@ class KioscoPOS:
         self.prod_costo = tk.Entry(frame_form, font=('Arial', 11), width=30)
         self.prod_costo.pack(pady=2)
         
-        tk.Label(frame_form, text="Stock:", bg='#FAF2E3').pack(pady=2)
+        # Referencias para poder ocultar/mostrar los campos de stock
+        self.stock_label = tk.Label(frame_form, text="Stock:", bg='#FAF2E3')
+        self.stock_label.pack(pady=2)
         self.prod_stock = tk.Entry(frame_form, font=('Arial', 11), width=30)
         self.prod_stock.pack(pady=2)
         
@@ -484,7 +560,7 @@ class KioscoPOS:
         ).pack(side='left', padx=5)
         
         # Frame derecho - Lista de productos
-        frame_lista_prod = tk.Frame(frame_productos, bg='#FAF2E3')
+        frame_lista_prod = tk.Frame(frame_contenedor, bg='#FAF2E3')
         frame_lista_prod.pack(side='right', fill='both', expand=True, padx=10, pady=10)
         
         tk.Label(
@@ -501,9 +577,15 @@ class KioscoPOS:
         scrollbar_tabla = tk.Scrollbar(frame_tabla)
         scrollbar_tabla.pack(side='right', fill='y')
         
+        # Columnas condicionadas por configuración de stock
+        if self.stock_habilitado():
+            columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Stock', 'Categoría', 'Código')
+        else:
+            columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Categoría', 'Código')
+        
         self.tabla_productos = ttk.Treeview(
             frame_tabla,
-            columns=('ID', 'Nombre', 'Precio', 'Costo', 'Stock', 'Categoría', 'Código'),
+            columns=columnas,
             show='headings',
             yscrollcommand=scrollbar_tabla.set
         )
@@ -512,7 +594,8 @@ class KioscoPOS:
         self.tabla_productos.heading('Nombre', text='Nombre', command=lambda: self.ordenar_tabla_productos('Nombre'))
         self.tabla_productos.heading('Precio', text='Precio', command=lambda: self.ordenar_tabla_productos('Precio'))
         self.tabla_productos.heading('Costo', text='Costo', command=lambda: self.ordenar_tabla_productos('Costo'))
-        self.tabla_productos.heading('Stock', text='Stock', command=lambda: self.ordenar_tabla_productos('Stock'))
+        if self.stock_habilitado():
+            self.tabla_productos.heading('Stock', text='Stock', command=lambda: self.ordenar_tabla_productos('Stock'))
         self.tabla_productos.heading('Categoría', text='Categoría', command=lambda: self.ordenar_tabla_productos('Categoría'))
         self.tabla_productos.heading('Código', text='Código Barras', command=lambda: self.ordenar_tabla_productos('Código'))
             
@@ -520,7 +603,8 @@ class KioscoPOS:
         self.tabla_productos.column('Nombre', width=200)
         self.tabla_productos.column('Precio', width=80)
         self.tabla_productos.column('Costo', width=80)
-        self.tabla_productos.column('Stock', width=60)
+        if self.stock_habilitado():
+            self.tabla_productos.column('Stock', width=60)
         self.tabla_productos.column('Categoría', width=100)
         self.tabla_productos.column('Código', width=120)
         
@@ -573,6 +657,123 @@ class KioscoPOS:
         ).pack(side='right', padx=5)
         # Cargar productos
         self.actualizar_tabla_productos()
+        
+        # Actualizar visibilidad de campos de stock
+        self.actualizar_visibilidad_stock()
+    
+    def confirmar_toggle_stock(self):
+        """Confirma el cambio de configuración de stock antes de aplicarlo"""
+        nuevo_estado = self.stock_var.get()
+        estado_actual = self.stock_habilitado()
+        
+        # Si no hay cambio real, no hacer nada
+        if (nuevo_estado and estado_actual) or (not nuevo_estado and not estado_actual):
+            return
+        
+        if nuevo_estado:
+            # Activando stock
+            mensaje = ("⚠️ ACTIVAR CONTROL DE STOCK\n\n"
+                      "Esta acción habilitará:\n"
+                      "• Validación de stock en ventas\n"
+                      "• Descuento automático de stock\n"
+                      "• Campos y columnas de stock visibles\n"
+                      "• Alertas de stock bajo\n\n"
+                      "¿Confirmas activar el control de stock?")
+            titulo = "Confirmar Activación de Stock"
+        else:
+            # Desactivando stock
+            mensaje = ("⚠️ DESACTIVAR CONTROL DE STOCK\n\n"
+                      "Esta acción deshabilitará:\n"
+                      "• Validación de stock en ventas\n"
+                      "• Descuento automático de stock\n"
+                      "• Campos y columnas de stock se ocultarán\n"
+                      "• No habrá alertas de stock bajo\n\n"
+                      "¿Confirmas desactivar el control de stock?")
+            titulo = "Confirmar Desactivación de Stock"
+        
+        # Mostrar diálogo de confirmación
+        if messagebox.askyesno(titulo, mensaje, icon='warning'):
+            # Usuario confirmó el cambio
+            self.toggle_stock()
+        else:
+            # Usuario canceló, revertir el checkbox
+            self.stock_var.set(estado_actual)
+    
+    def toggle_stock(self):
+        """Cambia la configuración de stock habilitado/deshabilitado"""
+        nuevo_valor = '1' if self.stock_var.get() else '0'
+        self.set_configuracion('stock_habilitado', nuevo_valor)
+        
+        # Actualizar visibilidad de los campos
+        self.actualizar_visibilidad_stock()
+        
+        # Actualizar visibilidad del botón "Restar Stock" si existe
+        if hasattr(self, 'btn_restar_stock'):
+            if self.stock_habilitado():
+                self.btn_restar_stock.pack(side='left', padx=5)
+            else:
+                self.btn_restar_stock.pack_forget()
+        
+        # Recrear la tabla de productos con las columnas correctas
+        if hasattr(self, 'tabla_productos'):
+            # Guardar el frame padre
+            frame_padre = self.tabla_productos.master
+            
+            # Destruir tabla anterior
+            self.tabla_productos.destroy()
+            
+            # Recrear tabla con columnas correctas
+            if self.stock_habilitado():
+                columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Stock', 'Categoría', 'Código')
+            else:
+                columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Categoría', 'Código')
+            
+            self.tabla_productos = ttk.Treeview(
+                frame_padre,
+                columns=columnas,
+                show='headings',
+                yscrollcommand=frame_padre.children['!scrollbar'].set
+            )
+            
+            # Configurar encabezados
+            self.tabla_productos.heading('ID', text='ID', command=lambda: self.ordenar_tabla_productos('ID'))
+            self.tabla_productos.heading('Nombre', text='Nombre', command=lambda: self.ordenar_tabla_productos('Nombre'))
+            self.tabla_productos.heading('Precio', text='Precio', command=lambda: self.ordenar_tabla_productos('Precio'))
+            self.tabla_productos.heading('Costo', text='Costo', command=lambda: self.ordenar_tabla_productos('Costo'))
+            if self.stock_habilitado():
+                self.tabla_productos.heading('Stock', text='Stock', command=lambda: self.ordenar_tabla_productos('Stock'))
+            self.tabla_productos.heading('Categoría', text='Categoría', command=lambda: self.ordenar_tabla_productos('Categoría'))
+            self.tabla_productos.heading('Código', text='Código Barras', command=lambda: self.ordenar_tabla_productos('Código'))
+                
+            # Configurar ancho de columnas
+            self.tabla_productos.column('ID', width=50)
+            self.tabla_productos.column('Nombre', width=200)
+            self.tabla_productos.column('Precio', width=80)
+            self.tabla_productos.column('Costo', width=80)
+            if self.stock_habilitado():
+                self.tabla_productos.column('Stock', width=60)
+            self.tabla_productos.column('Categoría', width=100)
+            self.tabla_productos.column('Código', width=120)
+            
+            self.tabla_productos.pack(side='left', fill='both', expand=True)
+            self.tabla_productos.bind('<Double-Button-1>', self.editar_producto)
+        
+        # Actualizar tabla y lista de productos
+        self.actualizar_tabla_productos()
+        if hasattr(self, 'actualizar_lista_productos'):
+            self.actualizar_lista_productos()
+        
+        mensaje = "Stock habilitado" if self.stock_var.get() else "Stock deshabilitado"
+        messagebox.showinfo("Configuración", f"{mensaje} correctamente")
+    
+    def actualizar_visibilidad_stock(self):
+        """Actualiza la visibilidad de los campos relacionados con stock"""
+        if self.stock_habilitado():
+            self.stock_label.pack(pady=2)
+            self.prod_stock.pack(pady=2)
+        else:
+            self.stock_label.pack_forget()
+            self.prod_stock.pack_forget()
     
     def crear_pestaña_reportes(self):
         """Crea la pestaña de reportes"""
@@ -862,9 +1063,18 @@ class KioscoPOS:
         
         productos = self.cursor.fetchall()
         for producto in productos:
-            texto = f"{producto[1]} - ${producto[2]} - Stock: {producto[4]} - {producto[5]}"
+            if self.stock_habilitado():
+                # Mostrar con información de stock
+                texto = f"{producto[1]} - ${producto[2]} - Stock: {producto[4]} - {producto[5]}"
+                # Color de fondo rojo si stock bajo
+                color = '#fee2e2' if producto[4] <= 5 else 'white'
+            else:
+                # Mostrar sin información de stock
+                texto = f"{producto[1]} - ${producto[2]} - {producto[5]}"
+                color = 'white'
+            
             self.lista_productos.insert(tk.END, texto)
-            self.lista_productos.itemconfig(tk.END, {'bg': '#fee2e2' if producto[4] <= 5 else 'white'})
+            self.lista_productos.itemconfig(tk.END, {'bg': color})
     
     def buscar_por_barcode(self, event):
         """Busca y agrega producto por código de barras"""
@@ -876,14 +1086,16 @@ class KioscoPOS:
         producto = self.cursor.fetchone()
         
         if producto:
-            if producto[4] <= 0:
+            # Solo validar stock si está habilitado
+            if self.stock_habilitado() and producto[4] <= 0:
                 messagebox.showwarning("Sin Stock", "No hay stock disponible de este producto")
                 return
             
             # Verificar si ya está en el carrito
             for item in self.carrito:
                 if item['id'] == producto[0]:
-                    if item['cantidad'] >= producto[4]:
+                    # Solo validar límite de stock si está habilitado
+                    if self.stock_habilitado() and item['cantidad'] >= producto[4]:
                         messagebox.showwarning("Stock Insuficiente", "No hay más stock disponible")
                         return
                     item['cantidad'] += 1
@@ -926,14 +1138,16 @@ class KioscoPOS:
         productos = self.cursor.fetchall()
         producto = productos[seleccion[0]]
         
-        if producto[4] <= 0:
+        # Solo validar stock si está habilitado
+        if self.stock_habilitado() and producto[4] <= 0:
             messagebox.showwarning("Sin Stock", "No hay stock disponible de este producto")
             return
         
         # Verificar si ya está en el carrito
         for item in self.carrito:
             if item['id'] == producto[0]:
-                if item['cantidad'] >= producto[4]:
+                # Solo validar límite de stock si está habilitado
+                if self.stock_habilitado() and item['cantidad'] >= producto[4]:
                     messagebox.showwarning("Stock Insuficiente", "No hay más stock disponible")
                     return
                 item['cantidad'] += 1
@@ -1008,6 +1222,11 @@ class KioscoPOS:
             messagebox.showwarning("Carrito vacío", "No hay productos en el carrito para restar stock.")
             return
 
+        # Solo permitir restar stock si está habilitado
+        if not self.stock_habilitado():
+            messagebox.showinfo("Stock deshabilitado", "El control de stock está deshabilitado. No se puede restar stock.")
+            return
+
         if not messagebox.askyesno("Confirmar", "¿Deseas restar el stock de los productos del carrito sin registrar una venta?"):
             return
 
@@ -1020,7 +1239,8 @@ class KioscoPOS:
 
         self.carrito = []
         self.actualizar_carrito_display()
-        self.actualizar_lista_productos()
+        if hasattr(self, 'actualizar_lista_productos'):
+            self.actualizar_lista_productos()
 
         messagebox.showinfo("Stock actualizado", "El stock fue actualizado correctamente (sin registrar venta).")
     def finalizar_venta(self, metodo_pago):
@@ -1033,14 +1253,8 @@ class KioscoPOS:
         total = sum(item['precio'] * item['cantidad'] for item in self.carrito)
         costo_total = sum(item['costo'] * item['cantidad'] for item in self.carrito)
         
-        # Registrar venta
+        # Registrar venta con turno
         fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        self.cursor.execute('''
-            INSERT INTO ventas (fecha, usuario, metodo_pago, total, costo_total)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (fecha, self.usuario_actual['nombre'], metodo_pago, total, costo_total))
-        
-        # Registrar turno si aplica
         turno = self.turno_actual if hasattr(self, 'turno_actual') and self.turno_actual else 'MAÑANA'
         self.cursor.execute('''
             INSERT INTO ventas (fecha, usuario, metodo_pago, total, costo_total, turno)
@@ -1056,10 +1270,11 @@ class KioscoPOS:
                 VALUES (?, ?, ?, ?, ?)
             ''', (venta_id, item['nombre'], item['cantidad'], item['precio'], item['costo']))
             
-            # Actualizar stock
-            self.cursor.execute('''
-                UPDATE productos SET stock = stock - ? WHERE id = ?
-            ''', (item['cantidad'], item['id']))
+            # Solo actualizar stock si está habilitado
+            if self.stock_habilitado():
+                self.cursor.execute('''
+                    UPDATE productos SET stock = stock - ? WHERE id = ?
+                ''', (item['cantidad'], item['id']))
         
         self.conn.commit()
         
@@ -1070,7 +1285,8 @@ class KioscoPOS:
         # Limpiar carrito
         self.carrito = []
         self.actualizar_carrito_display()
-        self.actualizar_lista_productos()
+        if hasattr(self, 'actualizar_lista_productos'):
+            self.actualizar_lista_productos()
         
         messagebox.showinfo("Éxito", f"Venta registrada exitosamente\nTotal: ${total}")
     
@@ -1147,20 +1363,33 @@ class KioscoPOS:
         nombre = self.prod_nombre.get()
         precio = self.prod_precio.get()
         costo = self.prod_costo.get()
-        stock = self.prod_stock.get()
         categoria = self.prod_categoria.get()
         codigo_barras = self.prod_barcode.get()
         
-        if not all([nombre, precio, costo, stock]):
+        # Validar campos obligatorios
+        if not all([nombre, precio, costo]):
             messagebox.showwarning("Campos Vacíos", "Por favor completa todos los campos obligatorios")
             return
+        
+        # Manejar stock según configuración
+        if self.stock_habilitado():
+            stock = self.prod_stock.get()
+            if not stock:
+                messagebox.showwarning("Campo Stock", "El campo stock es obligatorio cuando está habilitado")
+                return
+            try:
+                stock = int(stock)
+            except ValueError:
+                messagebox.showerror("Error", "El stock debe ser un número entero válido")
+                return
+        else:
+            stock = 0  # Valor por defecto cuando stock está deshabilitado
         
         try:
             precio = float(precio)
             costo = float(costo)
-            stock = int(stock)
         except ValueError:
-            messagebox.showerror("Error", "Precio, costo y stock deben ser números válidos")
+            messagebox.showerror("Error", "Precio y costo deben ser números válidos")
             return
         
         if self.producto_id:
@@ -1182,7 +1411,8 @@ class KioscoPOS:
         self.conn.commit()
         self.limpiar_formulario_producto()
         self.actualizar_tabla_productos()
-        self.actualizar_lista_productos()
+        if hasattr(self, 'actualizar_lista_productos'):
+            self.actualizar_lista_productos()
     
     def limpiar_formulario_producto(self):
         """Limpia el formulario de productos"""
@@ -1203,10 +1433,19 @@ class KioscoPOS:
         productos = self.cursor.fetchall()
         
         for producto in productos:
-            tag = 'bajo_stock' if producto[4] <= 5 else ''
-            self.tabla_productos.insert('', 'end', values=producto, tags=(tag,))
+            if self.stock_habilitado():
+                # Mostrar todas las columnas incluyendo stock
+                valores = producto
+                tag = 'bajo_stock' if producto[4] <= 5 else ''
+            else:
+                # Omitir la columna stock (índice 4)
+                valores = (producto[0], producto[1], producto[2], producto[3], producto[5], producto[6])
+                tag = ''
+            
+            self.tabla_productos.insert('', 'end', values=valores, tags=(tag,))
         
-        self.tabla_productos.tag_configure('bajo_stock', background='#fee2e2')
+        if self.stock_habilitado():
+            self.tabla_productos.tag_configure('bajo_stock', background='#fee2e2')
     
     def editar_producto(self, event=None):
         """Carga el producto seleccionado en el formulario para editar"""
@@ -1218,18 +1457,38 @@ class KioscoPOS:
         item = self.tabla_productos.item(seleccion[0])
         valores = item['values']
         
-        self.producto_id = valores[0]
-        self.prod_nombre.delete(0, tk.END)
-        self.prod_nombre.insert(0, valores[1])
-        self.prod_precio.delete(0, tk.END)
-        self.prod_precio.insert(0, valores[2])
-        self.prod_costo.delete(0, tk.END)
-        self.prod_costo.insert(0, valores[3])
-        self.prod_stock.delete(0, tk.END)
-        self.prod_stock.insert(0, valores[4])
-        self.prod_categoria.set(valores[5])
-        self.prod_barcode.delete(0, tk.END)
-        self.prod_barcode.insert(0, valores[6] if valores[6] else '')
+        # Manejar índices según si stock está habilitado o no
+        if self.stock_habilitado():
+            # Índices normales: ID(0), Nombre(1), Precio(2), Costo(3), Stock(4), Categoría(5), Código(6)
+            self.producto_id = valores[0]
+            self.prod_nombre.delete(0, tk.END)
+            self.prod_nombre.insert(0, valores[1])
+            self.prod_precio.delete(0, tk.END)
+            self.prod_precio.insert(0, valores[2])
+            self.prod_costo.delete(0, tk.END)
+            self.prod_costo.insert(0, valores[3])
+            self.prod_stock.delete(0, tk.END)
+            self.prod_stock.insert(0, valores[4])
+            self.prod_categoria.set(valores[5])
+            self.prod_barcode.delete(0, tk.END)
+            self.prod_barcode.insert(0, valores[6] if valores[6] else '')
+        else:
+            # Índices sin stock: ID(0), Nombre(1), Precio(2), Costo(3), Categoría(4), Código(5)
+            # Necesitamos obtener el producto completo de la BD para tener el stock
+            producto_id = valores[0]
+            self.cursor.execute('SELECT * FROM productos WHERE id = ?', (producto_id,))
+            producto_completo = self.cursor.fetchone()
+            
+            self.producto_id = producto_completo[0]
+            self.prod_nombre.delete(0, tk.END)
+            self.prod_nombre.insert(0, producto_completo[1])
+            self.prod_precio.delete(0, tk.END)
+            self.prod_precio.insert(0, producto_completo[2])
+            self.prod_costo.delete(0, tk.END)
+            self.prod_costo.insert(0, producto_completo[3])
+            self.prod_categoria.set(producto_completo[5])
+            self.prod_barcode.delete(0, tk.END)
+            self.prod_barcode.insert(0, producto_completo[6] if producto_completo[6] else '')
     
     def eliminar_producto(self):
         """Elimina el producto seleccionado"""
@@ -1240,13 +1499,14 @@ class KioscoPOS:
         
         if messagebox.askyesno("Confirmar", "¿Seguro que deseas eliminar este producto?"):
             item = self.tabla_productos.item(seleccion[0])
-            producto_id = item['values'][0]
+            producto_id = item['values'][0]  # El ID siempre está en el índice 0
             
             self.cursor.execute('DELETE FROM productos WHERE id = ?', (producto_id,))
             self.conn.commit()
             
             self.actualizar_tabla_productos()
-            self.actualizar_lista_productos()
+            if hasattr(self, 'actualizar_lista_productos'):
+                self.actualizar_lista_productos()
             messagebox.showinfo("Éxito", "Producto eliminado correctamente")
     def ordenar_tabla_productos(self, col, reverse=False):
         """Ordena la tabla de productos por la columna seleccionada"""
