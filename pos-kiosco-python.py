@@ -936,6 +936,29 @@ class KioscoPOS:
             command=self.actualizar_tabla_ventas,
             cursor='hand2'
         ).pack(side='left', padx=5)
+        
+        # Separador visual antes del botón peligroso
+        tk.Label(
+            frame_exportar,
+            text=" | ",
+            font=('Arial', 12, 'bold'),
+            bg='#FAF2E3',
+            fg='gray'
+        ).pack(side='left', padx=10)
+        
+        # Botón para eliminar reportes (peligroso)
+        tk.Button(
+            frame_exportar,
+            text="ELIMINAR REPORTES",
+            font=('Arial', 10, 'bold'),
+            bg='#dc2626',
+            fg='white',
+            command=self.confirmar_eliminar_reportes,
+            cursor='hand2',
+            relief='raised',
+            bd=3,
+            width=18
+        ).pack(side='right', padx=10)
                 
         # Calcular estadísticas
         self.actualizar_estadisticas()
@@ -1756,6 +1779,99 @@ class KioscoPOS:
                 messagebox.showinfo("Éxito", f"Reporte de ventas del {fecha} exportado a: {filename}")
         except Exception as e:
             messagebox.showerror("Error", f"Error al exportar: {str(e)}")
+    
+    def confirmar_eliminar_reportes(self):
+        """Confirma la eliminación de todos los reportes de ventas"""
+        # Primera confirmación
+        mensaje_1 = ("⚠️ ELIMINAR TODOS LOS REPORTES DE VENTAS\n\n"
+                    "🚨 ADVERTENCIA CRÍTICA 🚨\n\n"
+                    "Esta acción eliminará PERMANENTEMENTE:\n"
+                    "• Todas las ventas registradas\n"
+                    "• Todo el detalle de items vendidos\n"
+                    "• Histórico completo de transacciones\n"
+                    "• Estadísticas y reportes\n\n"
+                    "❌ NO HAY FORMA DE RECUPERAR ESTA INFORMACIÓN\n\n"
+                    "¿Estás COMPLETAMENTE SEGURO de continuar?")
+        
+        if not messagebox.askyesno("⚠️ CONFIRMACIÓN CRÍTICA", mensaje_1, icon='warning'):
+            return
+        
+        # Segunda confirmación más estricta
+        mensaje_2 = ("🔴 ÚLTIMA CONFIRMACIÓN 🔴\n\n"
+                    "Vas a BORRAR PERMANENTEMENTE todos los reportes.\n\n"
+                    "Esta acción:\n"
+                    "• NO se puede deshacer\n"
+                    "• Eliminará TODO el historial de ventas\n"
+                    "• Reiniciará las estadísticas a CERO\n\n"
+                    "Para confirmar, debes presionar 'Sí' nuevamente.\n\n"
+                    "¿CONFIRMAS la eliminación DEFINITIVA?")
+        
+        if not messagebox.askyesno("🚨 CONFIRMACIÓN FINAL", mensaje_2, icon='error'):
+            return
+        
+        # Tercera confirmación con contraseña
+        from tkinter import simpledialog
+        password = simpledialog.askstring(
+            "Verificación de Seguridad", 
+            "Por seguridad, ingresa la contraseña del administrador\npara confirmar esta acción IRREVERSIBLE:",
+            show='*'
+        )
+        
+        if not password:
+            messagebox.showinfo("Cancelado", "Operación cancelada por el usuario")
+            return
+        
+        # Verificar contraseña del usuario actual
+        if self.usuario_actual['rol'] != 'admin':
+            messagebox.showerror("Sin Permisos", "Solo los administradores pueden eliminar reportes")
+            return
+        
+        # Verificar contraseña en la base de datos
+        self.cursor.execute(
+            "SELECT password FROM usuarios WHERE nombre = ? AND rol = 'admin'",
+            (self.usuario_actual['nombre'],)
+        )
+        user_data = self.cursor.fetchone()
+        
+        if not user_data or user_data[0] != password:
+            messagebox.showerror("Contraseña Incorrecta", "Contraseña incorrecta. Operación cancelada.")
+            return
+        
+        # Si llegamos aquí, proceder con la eliminación
+        self.eliminar_reportes()
+    
+    def eliminar_reportes(self):
+        """Elimina todos los reportes de ventas de la base de datos"""
+        try:
+            # Eliminar items de venta primero (por restricción de clave foránea)
+            self.cursor.execute("DELETE FROM items_venta")
+            items_eliminados = self.cursor.rowcount
+            
+            # Eliminar ventas
+            self.cursor.execute("DELETE FROM ventas")
+            ventas_eliminadas = self.cursor.rowcount
+            
+            # Confirmar cambios
+            self.conn.commit()
+            
+            # Actualizar interfaces
+            self.actualizar_estadisticas()
+            self.actualizar_tabla_ventas()
+            
+            # Mensaje de confirmación
+            messagebox.showinfo(
+                "Reportes Eliminados", 
+                f"✅ Eliminación completada exitosamente\n\n"
+                f"• Ventas eliminadas: {ventas_eliminadas}\n"
+                f"• Items eliminados: {items_eliminados}\n\n"
+                f"Todas las estadísticas han sido reiniciadas."
+            )
+            
+        except Exception as e:
+            # Revertir cambios en caso de error
+            self.conn.rollback()
+            messagebox.showerror("Error", f"Error al eliminar reportes: {str(e)}")
+    
     # ===== MÉTODOS DE USUARIOS =====
     
     def agregar_usuario(self):
