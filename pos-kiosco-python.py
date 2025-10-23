@@ -5,6 +5,7 @@ from datetime import datetime
 import pandas as pd
 from fpdf import FPDF
 import os
+import sys
 import logging
 from PIL import Image, ImageTk
 
@@ -12,12 +13,21 @@ class KioscoPOS:
     def __init__(self, root):
         self.root = root
         self.root.title("Sistema POS - Kiosco Argentina")
-        self.root.geometry("1200x700")
-        self.root.configure(bg="#FAF2E3")
-        #self.root.iconbitmap(os.path.join("img", "kiosco.ico"))
         
-        base_path = os.path.dirname(__file__)
-        self.root.iconbitmap(os.path.join(base_path, "img", "kiosco.ico"))
+        # Maximizar ventana al iniciar
+        self.root.state('zoomed')  # Para Windows
+        # Alternativa para otros sistemas: self.root.attributes('-zoomed', True)
+        
+        self.root.configure(bg="#FAF2E3")
+        
+        # Configurar ícono de manera segura
+        try:
+            icon_path = self.get_resource_path("img", "kiosco.ico")
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"No se pudo cargar el ícono: {e}")
+            # Continúa sin ícono si hay error
         # Usuario actual
         self.usuario_actual = None
         
@@ -30,6 +40,18 @@ class KioscoPOS:
         # Mostrar login
         self.mostrar_login()
         logging.basicConfig(level=logging.INFO, format='%(message)s')
+        
+    def get_resource_path(self, *args):
+        """Obtiene la ruta correcta para recursos tanto en desarrollo como en ejecutable"""
+        try:
+            # Cuando se ejecuta desde PyInstaller
+            base_path = sys._MEIPASS
+        except AttributeError:
+            # Cuando se ejecuta desde el script normal
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        
+        return os.path.join(base_path, *args)
+        
     def init_database(self):
         """Inicializa la base de datos y crea las tablas"""
         self.conn = sqlite3.connect('kiosco.db')
@@ -150,7 +172,7 @@ class KioscoPOS:
         self.login_frame.place(relx=0.5, rely=0.5, anchor='center')
 
         try:
-            ruta_logo = os.path.join("img", "kioscoimg.png")
+            ruta_logo = self.get_resource_path("img", "kioscoimg.png")
             imagen_logo = Image.open(ruta_logo)
             imagen_logo = imagen_logo.resize((350, 350))  # tamaño ajustable
             self.logo_img = ImageTk.PhotoImage(imagen_logo)
