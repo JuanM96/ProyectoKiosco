@@ -122,6 +122,9 @@ class KioscoPOS:
             ''')
         
         self.conn.commit()
+        
+        # Limpiar códigos de barras con .0 al final
+        self.limpiar_codigos_barras()
     
     def get_configuracion(self, clave, default='1'):
         """Obtiene un valor de configuración"""
@@ -655,6 +658,29 @@ class KioscoPOS:
         command=self.importar_productos,
         cursor='hand2'
         ).pack(side='right', padx=5)
+        
+        # Separador visual antes del botón peligroso
+        tk.Label(
+            frame_acciones,
+            text=" | ",
+            font=('Arial', 12, 'bold'),
+            bg='#FAF2E3',
+            fg='gray'
+        ).pack(side='right', padx=10)
+        
+        # Botón para eliminar todos los productos (peligroso)
+        tk.Button(
+            frame_acciones,
+            text="ELIMINAR TODOS LOS PRODUCTOS",
+            font=('Arial', 10, 'bold'),
+            bg='#dc2626',
+            fg='white',
+            command=self.confirmar_eliminar_productos,
+            cursor='hand2',
+            relief='raised',
+            bd=3,
+            width=30
+        ).pack(side='right', padx=10)
         # Cargar productos
         self.actualizar_tabla_productos()
         
@@ -1089,12 +1115,18 @@ class KioscoPOS:
             if self.stock_habilitado():
                 # Mostrar con información de stock
                 texto = f"{producto[1]} - ${producto[2]} - Stock: {producto[4]} - {producto[5]}"
-                # Color de fondo rojo si stock bajo
-                color = '#fee2e2' if producto[4] <= 5 else 'white'
+                # Determinar color según prioridades
+                if producto[2] == 0 or producto[3] == 0:  # precio o costo en cero
+                    color = '#fef3c7'  # Amarillo (prioridad alta)
+                elif producto[4] <= 5:  # stock bajo
+                    color = '#fee2e2'  # Rojo claro
+                else:
+                    color = 'white'
             else:
                 # Mostrar sin información de stock
                 texto = f"{producto[1]} - ${producto[2]} - {producto[5]}"
-                color = 'white'
+                # Color amarillo si precio o costo están en cero
+                color = '#fef3c7' if producto[2] == 0 or producto[3] == 0 else 'white'
             
             self.lista_productos.insert(tk.END, texto)
             self.lista_productos.itemconfig(tk.END, {'bg': color})
@@ -1389,9 +1421,9 @@ class KioscoPOS:
         categoria = self.prod_categoria.get()
         codigo_barras = self.prod_barcode.get()
         
-        # Validar campos obligatorios
-        if not all([nombre, precio, costo]):
-            messagebox.showwarning("Campos Vacíos", "Por favor completa todos los campos obligatorios")
+        # Validar que al menos tenga nombre
+        if not nombre or nombre.strip() == '':
+            messagebox.showwarning("Campo Vacío", "El nombre del producto es obligatorio")
             return
         
         # Manejar stock según configuración
@@ -1408,12 +1440,28 @@ class KioscoPOS:
         else:
             stock = 0  # Valor por defecto cuando stock está deshabilitado
         
+        # Convertir precio y costo, permitiendo valores vacíos (se convertirán a 0)
         try:
-            precio = float(precio)
-            costo = float(costo)
+            precio = float(precio) if precio and precio.strip() != '' else 0.0
+            costo = float(costo) if costo and costo.strip() != '' else 0.0
         except ValueError:
-            messagebox.showerror("Error", "Precio y costo deben ser números válidos")
+            messagebox.showerror("Error", "Precio y costo deben ser números válidos (o estar vacíos)")
             return
+        
+        # Advertir si precio o costo están en cero
+        if precio == 0 or costo == 0:
+            advertencia = []
+            if precio == 0:
+                advertencia.append("precio")
+            if costo == 0:
+                advertencia.append("costo")
+            
+            mensaje_adv = f"⚠️ El {' y '.join(advertencia)} {'está' if len(advertencia) == 1 else 'están'} en cero.\n\n"
+            mensaje_adv += "El producto se guardará pero aparecerá marcado en amarillo hasta que completes todos los campos.\n\n"
+            mensaje_adv += "¿Deseas continuar?"
+            
+            if not messagebox.askyesno("Campos Incompletos", mensaje_adv, icon='warning'):
+                return
         
         if self.producto_id:
             # Actualizar
@@ -1429,9 +1477,14 @@ class KioscoPOS:
                 INSERT INTO productos (nombre, precio, costo, stock, categoria, codigo_barras)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (nombre, precio, costo, stock, categoria or 'Otros', codigo_barras))
+            # Reorganizar IDs después de agregar nuevo producto (sin commit automático)
+            self.reorganizar_ids_productos(auto_commit=False)
+            self.conn.commit()
             messagebox.showinfo("Éxito", "Producto agregado correctamente")
         
-        self.conn.commit()
+        if self.producto_id:  # Solo commit si es actualización (inserción ya hizo commit)
+            self.conn.commit()
+        
         self.limpiar_formulario_producto()
         self.actualizar_tabla_productos()
         if hasattr(self, 'actualizar_lista_productos'):
@@ -1456,19 +1509,34 @@ class KioscoPOS:
         productos = self.cursor.fetchall()
         
         for producto in productos:
+            # Limpiar código de barras si tiene .0 al final
+            producto_lista = list(producto)
+            if producto_lista[6] and str(producto_lista[6]).endswith('.0'):
+                producto_lista[6] = str(producto_lista[6])[:-2]
+            producto = tuple(producto_lista)
+            # Determinar tags según el estado del producto
+            tags = []
+            
+            # Tag por precio/costo incompleto (prioridad alta)
+            if producto[2] == 0 or producto[3] == 0:  # precio == 0 o costo == 0
+                tags.append('incompleto')
+            # Tag por stock bajo (solo si stock habilitado y no está incompleto)
+            elif self.stock_habilitado() and producto[4] <= 5:
+                tags.append('bajo_stock')
+            
             if self.stock_habilitado():
                 # Mostrar todas las columnas incluyendo stock
                 valores = producto
-                tag = 'bajo_stock' if producto[4] <= 5 else ''
             else:
                 # Omitir la columna stock (índice 4)
                 valores = (producto[0], producto[1], producto[2], producto[3], producto[5], producto[6])
-                tag = ''
             
-            self.tabla_productos.insert('', 'end', values=valores, tags=(tag,))
+            self.tabla_productos.insert('', 'end', values=valores, tags=tuple(tags))
         
+        # Configurar colores para los tags
+        self.tabla_productos.tag_configure('incompleto', background='#fef3c7', foreground='#92400e')  # Amarillo
         if self.stock_habilitado():
-            self.tabla_productos.tag_configure('bajo_stock', background='#fee2e2')
+            self.tabla_productos.tag_configure('bajo_stock', background='#fee2e2', foreground='#dc2626')  # Rojo claro
     
     def editar_producto(self, event=None):
         """Carga el producto seleccionado en el formulario para editar"""
@@ -1525,6 +1593,9 @@ class KioscoPOS:
             producto_id = item['values'][0]  # El ID siempre está en el índice 0
             
             self.cursor.execute('DELETE FROM productos WHERE id = ?', (producto_id,))
+            
+            # Reorganizar IDs después de eliminar producto (sin commit automático)
+            self.reorganizar_ids_productos(auto_commit=False)
             self.conn.commit()
             
             self.actualizar_tabla_productos()
@@ -1556,7 +1627,27 @@ class KioscoPOS:
                 productos = self.cursor.fetchall()
                 
                 df = pd.DataFrame(productos, columns=['ID', 'Nombre', 'Precio', 'Costo', 'Stock', 'Categoría', 'Código Barras'])
-                df.to_excel(filename, index=False)
+                
+                # Asegurar que los códigos de barras se exporten como texto
+                df['Código Barras'] = df['Código Barras'].astype(str)
+                
+                # Usar ExcelWriter para controlar mejor el formato
+                with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Productos')
+                    
+                    # Obtener la hoja de trabajo para formatear la columna de códigos de barras
+                    worksheet = writer.sheets['Productos']
+                    
+                    # Formatear la columna de códigos de barras como texto
+                    for row in range(2, len(df) + 2):  # Empezar desde fila 2 (después del header)
+                        cell = worksheet.cell(row=row, column=7)  # Columna 7 = Código Barras
+                        if cell.value and str(cell.value) != 'nan':
+                            cell.number_format = '@'  # Formato de texto
+                            # Limpiar .0 si existe
+                            value = str(cell.value)
+                            if value.endswith('.0'):
+                                value = value[:-2]
+                            cell.value = value
                 
                 messagebox.showinfo("Éxito", f"Productos exportados a: {filename}")
         except Exception as e:
@@ -1572,36 +1663,316 @@ class KioscoPOS:
     
         try:
             if file_path.endswith('.xlsx'):
-                df = pd.read_excel(file_path)
+                # Leer con tipos específicos para códigos de barras como texto
+                df = pd.read_excel(file_path, dtype={'Código Barras': str})
             else:
-                df = pd.read_csv(file_path)
+                # Para CSV también especificar tipos
+                df = pd.read_csv(file_path, dtype={'Código Barras': str})
     
+            # Mostrar las columnas disponibles para debug
+            print(f"Columnas encontradas: {list(df.columns)}")
+            
+            productos_importados = 0
+            productos_saltados = 0
+            errores_detalle = []
+            
+            # Verificar configuración de stock
+            stock_habilitado = self.stock_habilitado()
+            
             # Espera columnas: Nombre, Precio, Costo, Stock, Categoría, Código Barras
-            for _, row in df.iterrows():
-                nombre = row.get('Nombre')
-                precio = row.get('Precio')
-                costo = row.get('Costo')
-                stock = row.get('Stock')
-                categoria = row.get('Categoría', 'Otros')
-                codigo_barras = row.get('Código Barras', '')
-    
-                if pd.isnull(nombre) or pd.isnull(precio) or pd.isnull(costo) or pd.isnull(stock):
-                    continue  # Salta productos incompletos
-    
+            for index, row in df.iterrows():
                 try:
+                    nombre = row.get('Nombre')
+                    precio = row.get('Precio')
+                    costo = row.get('Costo')
+                    stock = row.get('Stock')
+                    categoria = row.get('Categoría', 'Otros')
+                    codigo_barras = row.get('Código Barras', '')
+                    
+                    # Validar que al menos tenga nombre
+                    if pd.isnull(nombre) or str(nombre).strip() == '':
+                        productos_saltados += 1
+                        errores_detalle.append(f"Fila {index + 2}: Nombre es obligatorio")
+                        continue
+                    
+                    # Manejar stock según configuración
+                    if stock_habilitado:
+                        if pd.isnull(stock):
+                            productos_saltados += 1
+                            errores_detalle.append(f"Fila {index + 2}: Stock requerido cuando está habilitado")
+                            continue
+                        stock = int(float(stock))
+                    else:
+                        stock = 0  # Valor por defecto cuando stock está deshabilitado
+                    
+                    # Convertir tipos de datos
+                    nombre = str(nombre).strip()
+                    
+                    # Manejar precio y costo - permitir valores nulos/cero
+                    if pd.isnull(precio) or precio == '':
+                        precio = 0.0
+                    else:
+                        precio = float(precio)
+                    
+                    if pd.isnull(costo) or costo == '':
+                        costo = 0.0
+                    else:
+                        costo = float(costo)
+                    
+                    categoria = str(categoria) if not pd.isnull(categoria) else 'Otros'
+                    
+                    # Manejar código de barras - remover .0 si existe
+                    if pd.isnull(codigo_barras) or codigo_barras == '':
+                        codigo_barras = ''
+                    else:
+                        codigo_barras = str(codigo_barras)
+                        # Si termina en .0, removerlo (problema común con Excel/pandas)
+                        if codigo_barras.endswith('.0'):
+                            codigo_barras = codigo_barras[:-2]
+                    
+                    # Insertar en base de datos
                     self.cursor.execute('''
                         INSERT INTO productos (nombre, precio, costo, stock, categoria, codigo_barras)
                         VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (nombre, float(precio), float(costo), int(stock), categoria, str(codigo_barras)))
-                except sqlite3.IntegrityError:
-                    continue  # Salta duplicados
+                    ''', (nombre, precio, costo, stock, categoria, codigo_barras))
+                    
+                    productos_importados += 1
+                    
+                except sqlite3.IntegrityError as e:
+                    productos_saltados += 1
+                    errores_detalle.append(f"Fila {index + 2}: Producto duplicado o error de integridad")
+                    continue
+                except ValueError as e:
+                    productos_saltados += 1
+                    errores_detalle.append(f"Fila {index + 2}: Error de formato de datos - {str(e)}")
+                    continue
+                except Exception as e:
+                    productos_saltados += 1
+                    errores_detalle.append(f"Fila {index + 2}: Error inesperado - {str(e)}")
+                    continue
     
             self.conn.commit()
             self.actualizar_tabla_productos()
-            self.actualizar_lista_productos()
-            messagebox.showinfo("Éxito", "Productos importados correctamente")
+            if hasattr(self, 'actualizar_lista_productos'):
+                self.actualizar_lista_productos()
+            
+            # Mensaje detallado de resultado
+            mensaje = f"Importación completada:\n\n"
+            mensaje += f"✅ Productos importados: {productos_importados}\n"
+            if productos_saltados > 0:
+                mensaje += f"⚠️ Productos saltados: {productos_saltados}\n\n"
+                if errores_detalle:
+                    mensaje += "Detalles de errores:\n"
+                    # Mostrar solo los primeros 5 errores para no hacer el mensaje muy largo
+                    for error in errores_detalle[:5]:
+                        mensaje += f"• {error}\n"
+                    if len(errores_detalle) > 5:
+                        mensaje += f"... y {len(errores_detalle) - 5} errores más"
+            
+            if productos_importados > 0:
+                # Reorganizar IDs después de la importación
+                self.reorganizar_ids_productos()
+                messagebox.showinfo("Importación Completada", mensaje)
+            else:
+                messagebox.showwarning("Sin Productos Importados", mensaje)
+                
         except Exception as e:
-            messagebox.showerror("Error", f"Error al importar: {str(e)}")
+            messagebox.showerror("Error", f"Error al importar archivo: {str(e)}\n\nVerifica que el archivo tenga las columnas correctas:\n• Nombre\n• Precio\n• Costo\n• Stock (si está habilitado)\n• Categoría\n• Código Barras")
+    
+    def reorganizar_ids_productos(self, auto_commit=True):
+        """Reorganiza los IDs de productos para que sean secuenciales"""
+        try:
+            # Obtener todos los productos ordenados por ID actual
+            self.cursor.execute('SELECT * FROM productos ORDER BY id')
+            productos = self.cursor.fetchall()
+            
+            if not productos:
+                # Si no hay productos, asegurar que la secuencia esté en 0
+                self.cursor.execute('''
+                    INSERT OR REPLACE INTO sqlite_sequence (name, seq) VALUES ('productos', 0)
+                ''')
+                if auto_commit:
+                    self.conn.commit()
+                return
+            
+            # Verificar si los IDs ya están secuenciales
+            ids_esperados = list(range(1, len(productos) + 1))
+            ids_actuales = [producto[0] for producto in productos]
+            
+            if ids_actuales == ids_esperados:
+                # Los IDs ya están correctos, solo actualizar secuencia
+                self.cursor.execute(f'''
+                    INSERT OR REPLACE INTO sqlite_sequence (name, seq) VALUES ('productos', {len(productos)})
+                ''')
+                if auto_commit:
+                    self.conn.commit()
+                return
+            
+            # Crear una tabla temporal
+            self.cursor.execute('''
+                CREATE TEMP TABLE productos_temp AS 
+                SELECT * FROM productos WHERE 1=0
+            ''')
+            
+            # Insertar productos con nuevos IDs secuenciales
+            for nuevo_id, producto in enumerate(productos, 1):
+                self.cursor.execute('''
+                    INSERT INTO productos_temp (id, nombre, precio, costo, stock, categoria, codigo_barras)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (nuevo_id, producto[1], producto[2], producto[3], producto[4], producto[5], producto[6]))
+            
+            # Reemplazar tabla original
+            self.cursor.execute('DELETE FROM productos')
+            self.cursor.execute('''
+                INSERT INTO productos (id, nombre, precio, costo, stock, categoria, codigo_barras)
+                SELECT id, nombre, precio, costo, stock, categoria, codigo_barras 
+                FROM productos_temp
+            ''')
+            
+            # Limpiar tabla temporal
+            self.cursor.execute('DROP TABLE productos_temp')
+            
+            # Actualizar el contador autoincrement
+            self.cursor.execute(f'''
+                INSERT OR REPLACE INTO sqlite_sequence (name, seq) VALUES ('productos', {len(productos)})
+            ''')
+            
+            if auto_commit:
+                self.conn.commit()
+                
+            print(f"IDs reorganizados: {len(productos)} productos renumerados correctamente")
+            
+        except Exception as e:
+            print(f"Error al reorganizar IDs: {e}")
+            # En caso de error, hacer rollback solo si auto_commit está habilitado
+            if auto_commit:
+                self.conn.rollback()
+    
+    def limpiar_codigos_barras(self):
+        """Limpia los códigos de barras que terminan en .0 en la base de datos"""
+        try:
+            # Obtener todos los productos con códigos de barras que terminan en .0
+            self.cursor.execute('''
+                SELECT id, codigo_barras FROM productos 
+                WHERE codigo_barras LIKE '%.0'
+            ''')
+            productos_con_problema = self.cursor.fetchall()
+            
+            if not productos_con_problema:
+                return
+            
+            # Actualizar cada producto
+            for producto_id, codigo_barras in productos_con_problema:
+                nuevo_codigo = codigo_barras[:-2]  # Remover los últimos 2 caracteres (.0)
+                self.cursor.execute('''
+                    UPDATE productos SET codigo_barras = ? WHERE id = ?
+                ''', (nuevo_codigo, producto_id))
+            
+            self.conn.commit()
+            print(f"Limpiados {len(productos_con_problema)} códigos de barras")
+            
+        except Exception as e:
+            print(f"Error al limpiar códigos de barras: {e}")
+            self.conn.rollback()
+    
+    def confirmar_eliminar_productos(self):
+        """Confirma la eliminación de todos los productos"""
+        # Primera confirmación
+        mensaje_1 = ("⚠️ ELIMINAR TODOS LOS PRODUCTOS\n\n"
+                    "🚨 ADVERTENCIA CRÍTICA 🚨\n\n"
+                    "Esta acción eliminará PERMANENTEMENTE:\n"
+                    "• Todos los productos registrados\n"
+                    "• Todo el inventario actual\n"
+                    "• Códigos de barras asociados\n"
+                    "• Información de precios y costos\n\n"
+                    "❌ NO HAY FORMA DE RECUPERAR ESTA INFORMACIÓN\n\n"
+                    "¿Estás COMPLETAMENTE SEGURO de continuar?")
+        
+        if not messagebox.askyesno("⚠️ CONFIRMACIÓN CRÍTICA", mensaje_1, icon='warning'):
+            return
+        
+        # Segunda confirmación más estricta
+        mensaje_2 = ("🔴 ÚLTIMA CONFIRMACIÓN 🔴\n\n"
+                    "Vas a BORRAR PERMANENTEMENTE todos los productos.\n\n"
+                    "Esta acción:\n"
+                    "• NO se puede deshacer\n"
+                    "• Eliminará TODO el inventario\n"
+                    "• Reiniciará el catálogo a CERO\n"
+                    "• Afectará el punto de venta\n\n"
+                    "Para confirmar, debes presionar 'Sí' nuevamente.\n\n"
+                    "¿CONFIRMAS la eliminación DEFINITIVA?")
+        
+        if not messagebox.askyesno("🚨 CONFIRMACIÓN FINAL", mensaje_2, icon='error'):
+            return
+        
+        # Tercera confirmación con contraseña
+        from tkinter import simpledialog
+        password = simpledialog.askstring(
+            "Verificación de Seguridad", 
+            "Por seguridad, ingresa la contraseña del administrador\npara confirmar esta acción IRREVERSIBLE:",
+            show='*'
+        )
+        
+        if not password:
+            messagebox.showinfo("Cancelado", "Operación cancelada por el usuario")
+            return
+        
+        # Verificar contraseña del usuario actual
+        if self.usuario_actual['rol'] != 'admin':
+            messagebox.showerror("Sin Permisos", "Solo los administradores pueden eliminar todos los productos")
+            return
+        
+        # Verificar contraseña en la base de datos
+        self.cursor.execute(
+            "SELECT password FROM usuarios WHERE nombre = ? AND rol = 'admin'",
+            (self.usuario_actual['nombre'],)
+        )
+        user_data = self.cursor.fetchone()
+        
+        if not user_data or user_data[0] != password:
+            messagebox.showerror("Contraseña Incorrecta", "Contraseña incorrecta. Operación cancelada.")
+            return
+        
+        # Si llegamos aquí, proceder con la eliminación
+        self.eliminar_productos()
+    
+    def eliminar_productos(self):
+        """Elimina todos los productos de la base de datos"""
+        try:
+            # Contar productos antes de eliminar
+            self.cursor.execute("SELECT COUNT(*) FROM productos")
+            productos_count = self.cursor.fetchone()[0]
+            
+            # Eliminar todos los productos
+            self.cursor.execute("DELETE FROM productos")
+            productos_eliminados = self.cursor.rowcount
+            
+            # Reiniciar el contador de autoincrement
+            self.cursor.execute("DELETE FROM sqlite_sequence WHERE name='productos'")
+            
+            # Confirmar cambios
+            self.conn.commit()
+            
+            # Actualizar interfaces
+            self.actualizar_tabla_productos()
+            if hasattr(self, 'actualizar_lista_productos'):
+                self.actualizar_lista_productos()
+            
+            # Mensaje de confirmación
+            messagebox.showinfo(
+                "Productos Eliminados", 
+                f"✅ Eliminación completada exitosamente\n\n"
+                f"• Productos eliminados: {productos_eliminados}\n"
+                f"• Inventario reiniciado a cero\n"
+                f"• IDs reiniciados desde 1\n\n"
+                f"El catálogo de productos está ahora vacío."
+            )
+            
+        except Exception as e:
+            # Revertir cambios en caso de error
+            self.conn.rollback()
+            messagebox.showerror("Error", f"Error al eliminar productos: {str(e)}")
+    
     # ===== MÉTODOS DE REPORTES =====
     
     def actualizar_estadisticas(self):
