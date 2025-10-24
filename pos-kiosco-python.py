@@ -2066,7 +2066,7 @@ class KioscoPOS:
             self.tabla_ventas.insert('', 'end', values=valores)
     
     def exportar_todo_excel(self):
-        """Exporta todos los datos a Excel"""
+        """Exporta todos los datos a Excel con formato profesional"""
         try:
             filename = filedialog.asksaveasfilename(
                 defaultextension=".xlsx",
@@ -2077,25 +2077,48 @@ class KioscoPOS:
             if filename:
                 with pd.ExcelWriter(filename, engine='openpyxl') as writer:
                     # Productos
-                    self.cursor.execute('SELECT * FROM productos')
+                    self.cursor.execute('SELECT id, nombre, precio, costo, stock, categoria, codigo_barras FROM productos ORDER BY nombre')
                     productos = self.cursor.fetchall()
                     df_productos = pd.DataFrame(productos, columns=['ID', 'Nombre', 'Precio', 'Costo', 'Stock', 'Categoría', 'Código Barras'])
+                    df_productos['Margen (%)'] = ((df_productos['Precio'] - df_productos['Costo']) / df_productos['Precio'] * 100).round(1)
                     df_productos.to_excel(writer, sheet_name='Productos', index=False)
                     
-                    # Ventas (agrega columna Turno)
-                    self.cursor.execute('SELECT * FROM ventas')
+                    # Formatear hoja productos
+                    ws_productos = writer.sheets['Productos']
+                    self._formatear_hoja_excel(ws_productos, df_productos, 'Listado Completo de Productos')
+                    
+                    # Ventas con ganancia calculada
+                    self.cursor.execute('SELECT * FROM ventas ORDER BY fecha DESC')
                     ventas = self.cursor.fetchall()
                     df_ventas = pd.DataFrame(ventas, columns=['ID', 'Fecha', 'Usuario', 'Método Pago', 'Total', 'Costo Total', 'Turno'])
                     df_ventas['Ganancia'] = df_ventas['Total'] - df_ventas['Costo Total']
-                    df_ventas.to_excel(writer, sheet_name='Ventas', index=False)
+                    df_ventas['Margen (%)'] = ((df_ventas['Total'] - df_ventas['Costo Total']) / df_ventas['Total'] * 100).round(1)
+                    df_ventas.to_excel(writer, sheet_name='Todas las Ventas', index=False)
                     
-                    # Items de ventas
-                    self.cursor.execute('SELECT * FROM items_venta')
+                    # Formatear hoja ventas
+                    ws_ventas = writer.sheets['Todas las Ventas']
+                    self._formatear_hoja_excel(ws_ventas, df_ventas, 'Historial Completo de Ventas')
+                    
+                    # Items de ventas con más detalle
+                    self.cursor.execute('''
+                        SELECT iv.*, v.fecha, v.usuario 
+                        FROM items_venta iv 
+                        JOIN ventas v ON iv.venta_id = v.id 
+                        ORDER BY v.fecha DESC
+                    ''')
                     items = self.cursor.fetchall()
-                    df_items = pd.DataFrame(items, columns=['ID', 'ID Venta', 'Producto', 'Cantidad', 'Precio Unit.', 'Costo Unit.'])
-                    df_items.to_excel(writer, sheet_name='Detalle Ventas', index=False)
+                    df_items = pd.DataFrame(items, columns=[
+                        'ID Item', 'ID Venta', 'Producto', 'Cantidad', 'Precio Unit.', 'Costo Unit.', 'Fecha Venta', 'Usuario'
+                    ])
+                    df_items['Subtotal'] = df_items['Cantidad'] * df_items['Precio Unit.']
+                    df_items['Ganancia Item'] = (df_items['Precio Unit.'] - df_items['Costo Unit.']) * df_items['Cantidad']
+                    df_items.to_excel(writer, sheet_name='Detalle Completo', index=False)
                     
-                    # Resumen
+                    # Formatear hoja items
+                    ws_items = writer.sheets['Detalle Completo']
+                    self._formatear_hoja_excel(ws_items, df_items, 'Detalle Completo de Productos Vendidos')
+                    
+                    # Resumen estadístico mejorado
                     hoy = datetime.now().strftime('%Y-%m-%d')
                     mes_actual = datetime.now().strftime('%Y-%m')
                     anio_actual = datetime.now().strftime('%Y')
@@ -2109,19 +2132,30 @@ class KioscoPOS:
                     self.cursor.execute('SELECT COUNT(*), SUM(total), SUM(total - costo_total) FROM ventas WHERE strftime("%Y", fecha) = ?', (anio_actual,))
                     resumen_anio = self.cursor.fetchone()
                     
+                    # Estadísticas adicionales
+                    self.cursor.execute('SELECT COUNT(*) FROM productos')
+                    total_productos = self.cursor.fetchone()[0]
+                    
+                    self.cursor.execute('SELECT SUM(stock * costo) FROM productos')
+                    valor_inventario = self.cursor.fetchone()[0] or 0
+                    
                     df_resumen = pd.DataFrame({
-                        'Período': ['Hoy', 'Este Mes', 'Este Año'],
-                        'Cantidad Ventas': [resumen_hoy[0], resumen_mes[0], resumen_anio[0]],
-                        'Total Vendido': [resumen_hoy[1] or 0, resumen_mes[1] or 0, resumen_anio[1] or 0],
-                        'Ganancia': [resumen_hoy[2] or 0, resumen_mes[2] or 0, resumen_anio[2] or 0]
+                        'Período': ['Hoy', 'Este Mes', 'Este Año', 'Productos Registrados', 'Valor Inventario'],
+                        'Cantidad': [resumen_hoy[0] or 0, resumen_mes[0] or 0, resumen_anio[0] or 0, total_productos, ''],
+                        'Total Vendido ($)': [resumen_hoy[1] or 0, resumen_mes[1] or 0, resumen_anio[1] or 0, '', f"${valor_inventario:,.2f}"],
+                        'Ganancia ($)': [resumen_hoy[2] or 0, resumen_mes[2] or 0, resumen_anio[2] or 0, '', '']
                     })
-                    df_resumen.to_excel(writer, sheet_name='Resumen', index=False)
+                    df_resumen.to_excel(writer, sheet_name='Resumen Estadístico', index=False)
+                    
+                    # Formatear hoja resumen
+                    ws_resumen = writer.sheets['Resumen Estadístico']
+                    self._formatear_hoja_excel(ws_resumen, df_resumen, 'Resumen Estadístico General')
             
-            messagebox.showinfo("Éxito", f"Reporte completo exportado a: {filename}")
+            messagebox.showinfo("Éxito", f"Reporte completo exportado con formato mejorado a:\n{filename}")
         except Exception as e:
             messagebox.showerror("Error", f"Error al exportar: {str(e)}")
     def exportar_ventas_dia_excel(self):
-        """Exporta las ventas de un día específico a Excel con totales"""
+        """Exporta las ventas de un día específico a Excel con formato mejorado y detalles completos"""
         fecha = self.entry_fecha_reporte.get()
         if not fecha:
             messagebox.showwarning("Fecha requerida", "Por favor ingresa una fecha en formato YYYY-MM-DD")
@@ -2131,48 +2165,231 @@ class KioscoPOS:
             filename = filedialog.asksaveasfilename(
                 defaultextension=".xlsx",
                 filetypes=[("Excel files", "*.xlsx")],
-                initialfile=f"ventas_{fecha.replace('-', '')}.xlsx"
+                initialfile=f"ventas_detalladas_{fecha.replace('-', '')}.xlsx"
             )
             if filename:
-                # Ventas del día
+                from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                from openpyxl.utils.dataframe import dataframe_to_rows
+                
+                # Consulta mejorada con detalles completos de ventas
                 self.cursor.execute('''
-                    SELECT * FROM ventas WHERE DATE(fecha) = ?
+                    SELECT 
+                        v.id as venta_id,
+                        v.fecha,
+                        v.usuario,
+                        v.metodo_pago,
+                        v.total as total_venta,
+                        v.costo_total as costo_venta,
+                        (v.total - v.costo_total) as ganancia_venta,
+                        v.turno
+                    FROM ventas v 
+                    WHERE DATE(v.fecha) = ?
+                    ORDER BY v.fecha DESC
                 ''', (fecha,))
                 ventas = self.cursor.fetchall()
-                df_ventas = pd.DataFrame(ventas, columns=['ID', 'Fecha', 'Usuario', 'Método Pago', 'Total', 'Costo Total', 'Turno'])
-                df_ventas['Ganancia'] = df_ventas['Total'] - df_ventas['Costo Total']
+                
+                # Consulta detallada de productos vendidos
+                self.cursor.execute('''
+                    SELECT 
+                        v.id as venta_id,
+                        v.fecha,
+                        v.usuario,
+                        v.turno,
+                        iv.producto_nombre as producto,
+                        iv.cantidad,
+                        iv.precio_unitario,
+                        iv.costo_unitario,
+                        (iv.cantidad * iv.precio_unitario) as subtotal,
+                        (iv.cantidad * iv.costo_unitario) as costo_subtotal,
+                        ((iv.cantidad * iv.precio_unitario) - (iv.cantidad * iv.costo_unitario)) as ganancia_producto
+                    FROM ventas v
+                    JOIN items_venta iv ON v.id = iv.venta_id
+                    WHERE DATE(v.fecha) = ?
+                    ORDER BY v.fecha DESC, iv.producto_nombre
+                ''', (fecha,))
+                detalle_productos = self.cursor.fetchall()
 
-                # Items de ventas del día
-                venta_ids = [v[0] for v in ventas]
-                if venta_ids:
-                    placeholders = ','.join(['?'] * len(venta_ids))
-                    self.cursor.execute(f'''
-                        SELECT * FROM items_venta WHERE venta_id IN ({placeholders})
-                    ''', venta_ids)
-                    items = self.cursor.fetchall()
-                else:
-                    items = []
-                df_items = pd.DataFrame(items, columns=['ID', 'ID Venta', 'Producto', 'Cantidad', 'Precio Unit.', 'Costo Unit.'])
-
-                # Totales
-                total_vendido = df_ventas['Total'].sum() if not df_ventas.empty else 0
-                total_ganancia = df_ventas['Ganancia'].sum() if not df_ventas.empty else 0
-
-                # Exportar a Excel
+                # Crear workbook con formato
                 with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-                    df_ventas.to_excel(writer, sheet_name='Ventas', index=False)
-                    df_items.to_excel(writer, sheet_name='Detalle Ventas', index=False)
-                    # Totales
-                    df_totales = pd.DataFrame({
-                        'Total Vendido': [total_vendido],
-                        'Total Ganancia': [total_ganancia]
-                    })
-                    df_totales.to_excel(writer, sheet_name='Totales', index=False)
+                    
+                    # Hoja 1: Resumen de Ventas
+                    if ventas:
+                        df_ventas = pd.DataFrame(ventas, columns=[
+                            'ID Venta', 'Fecha y Hora', 'Usuario', 'Método Pago', 
+                            'Total Venta', 'Costo Venta', 'Ganancia Venta', 'Turno'
+                        ])
+                        df_ventas.to_excel(writer, sheet_name='Resumen Ventas', index=False)
+                        
+                        # Formatear hoja de ventas
+                        ws_ventas = writer.sheets['Resumen Ventas']
+                        self._formatear_hoja_excel(ws_ventas, df_ventas, 'Resumen de Ventas del ' + fecha)
+                    
+                    # Hoja 2: Detalle de Productos Vendidos
+                    if detalle_productos:
+                        df_detalle = pd.DataFrame(detalle_productos, columns=[
+                            'ID Venta', 'Fecha y Hora', 'Usuario', 'Turno', 'Producto',
+                            'Cantidad', 'Precio Unit.', 'Costo Unit.', 'Subtotal', 
+                            'Costo Subtotal', 'Ganancia por Producto'
+                        ])
+                        df_detalle.to_excel(writer, sheet_name='Detalle Productos', index=False)
+                        
+                        # Formatear hoja de detalle
+                        ws_detalle = writer.sheets['Detalle Productos']
+                        self._formatear_hoja_excel(ws_detalle, df_detalle, 'Detalle de Productos Vendidos - ' + fecha)
+                    
+                    # Hoja 3: Análisis y Totales
+                    totales_data = self._calcular_totales_dia(fecha, ventas, detalle_productos)
+                    df_totales = pd.DataFrame(totales_data)
+                    df_totales.to_excel(writer, sheet_name='Análisis y Totales', index=False)
+                    
+                    # Formatear hoja de totales
+                    ws_totales = writer.sheets['Análisis y Totales']
+                    self._formatear_hoja_totales(ws_totales, df_totales, 'Análisis Financiero - ' + fecha)
 
-                messagebox.showinfo("Éxito", f"Reporte de ventas del {fecha} exportado a: {filename}")
+                messagebox.showinfo("Éxito", f"Reporte detallado del {fecha} exportado a:\n{filename}")
         except Exception as e:
             messagebox.showerror("Error", f"Error al exportar: {str(e)}")
     
+    def _formatear_hoja_excel(self, worksheet, dataframe, titulo):
+        """Aplica formato profesional a una hoja de Excel"""
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        
+        # Colores y estilos
+        header_fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+        title_fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        # Insertar fila para título
+        worksheet.insert_rows(1)
+        worksheet['A1'] = titulo
+        worksheet['A1'].font = Font(bold=True, size=14, color='FFFFFF')
+        worksheet['A1'].fill = PatternFill(start_color='203764', end_color='203764', fill_type='solid')
+        worksheet['A1'].alignment = Alignment(horizontal='center')
+        worksheet.merge_cells('A1:' + chr(65 + len(dataframe.columns) - 1) + '1')
+        
+        # Formatear encabezados (ahora en fila 2)
+        for col_num, column_title in enumerate(dataframe.columns, 1):
+            cell = worksheet.cell(row=2, column=col_num)
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = border
+        
+        # Formatear datos y ajustar columnas
+        for row_num in range(3, len(dataframe) + 3):
+            for col_num in range(1, len(dataframe.columns) + 1):
+                cell = worksheet.cell(row=row_num, column=col_num)
+                cell.border = border
+                cell.alignment = Alignment(vertical='center')
+                
+                # Formato especial para columnas de dinero
+                column_name = dataframe.columns[col_num - 1].lower()
+                if any(word in column_name for word in ['precio', 'costo', 'total', 'ganancia', 'subtotal']):
+                    cell.number_format = '"$" #,##0.00'
+                    cell.alignment = Alignment(horizontal='right', vertical='center')
+        
+        # Ajustar ancho de columnas automáticamente
+        for col_num in range(1, len(dataframe.columns) + 1):
+            max_length = 0
+            column_letter = chr(64 + col_num)  # A=65, B=66, etc.
+            
+            # Revisar todas las celdas de la columna
+            for row_num in range(1, len(dataframe) + 3):  # +3 por título y header
+                try:
+                    cell = worksheet.cell(row=row_num, column=col_num)
+                    if hasattr(cell, 'value') and cell.value is not None:
+                        cell_length = len(str(cell.value))
+                        if cell_length > max_length:
+                            max_length = cell_length
+                except:
+                    pass
+            
+            # Ajustar ancho mínimo para headers
+            if col_num <= len(dataframe.columns):
+                header_length = len(str(dataframe.columns[col_num - 1]))
+                max_length = max(max_length, header_length)
+            
+            adjusted_width = min(max(max_length + 2, 12), 50)  # Mínimo 12, máximo 50
+            worksheet.column_dimensions[column_letter].width = adjusted_width
+    
+    def _formatear_hoja_totales(self, worksheet, dataframe, titulo):
+        """Formato especial para la hoja de totales y análisis"""
+        from openpyxl.styles import Font, PatternFill, Alignment
+        
+        # Aplicar formato base
+        self._formatear_hoja_excel(worksheet, dataframe, titulo)
+        
+        # Destacar totales importantes con colores
+        for row_num in range(3, len(dataframe) + 3):
+            concepto_cell = worksheet.cell(row=row_num, column=1)
+            valor_cell = worksheet.cell(row=row_num, column=2)
+            
+            concepto = str(concepto_cell.value).lower()
+            
+            if 'total' in concepto or 'ganancia total' in concepto:
+                concepto_cell.fill = PatternFill(start_color='70AD47', end_color='70AD47', fill_type='solid')
+                concepto_cell.font = Font(bold=True, color='FFFFFF')
+                valor_cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
+                valor_cell.font = Font(bold=True)
+            elif 'producto más vendido' in concepto or 'mejor' in concepto:
+                concepto_cell.fill = PatternFill(start_color='FFC000', end_color='FFC000', fill_type='solid')
+                concepto_cell.font = Font(bold=True)
+                valor_cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
+    
+    def _calcular_totales_dia(self, fecha, ventas, detalle_productos):
+        """Calcula análisis completo del día"""
+        if not ventas:
+            return [{'Concepto': 'Sin ventas registradas', 'Valor': 'N/A'}]
+        
+        # Cálculos básicos
+        total_ventas = len(ventas)
+        total_vendido = sum(v[4] for v in ventas)  # total_venta
+        total_costo = sum(v[5] for v in ventas)    # costo_venta
+        total_ganancia = total_vendido - total_costo
+        
+        # Análisis por producto
+        productos_vendidos = {}
+        for item in detalle_productos:
+            producto = item[4]  # producto
+            cantidad = item[5]  # cantidad
+            ganancia = item[10] # ganancia_producto
+            
+            if producto in productos_vendidos:
+                productos_vendidos[producto]['cantidad'] += cantidad
+                productos_vendidos[producto]['ganancia'] += ganancia
+            else:
+                productos_vendidos[producto] = {'cantidad': cantidad, 'ganancia': ganancia}
+        
+        # Producto más vendido
+        producto_mas_vendido = max(productos_vendidos.items(), key=lambda x: x[1]['cantidad']) if productos_vendidos else ('N/A', {'cantidad': 0})
+        
+        # Producto con mayor ganancia
+        producto_mayor_ganancia = max(productos_vendidos.items(), key=lambda x: x[1]['ganancia']) if productos_vendidos else ('N/A', {'ganancia': 0})
+        
+        # Promedio por venta
+        promedio_venta = total_vendido / total_ventas if total_ventas > 0 else 0
+        
+        # Margen de ganancia promedio
+        margen_ganancia = (total_ganancia / total_vendido * 100) if total_vendido > 0 else 0
+        
+        return [
+            {'Concepto': 'Fecha del Reporte', 'Valor': fecha},
+            {'Concepto': 'Total de Ventas Realizadas', 'Valor': total_ventas},
+            {'Concepto': 'Total Vendido ($)', 'Valor': f"${total_vendido:,.2f}"},
+            {'Concepto': 'Total Costo de Mercadería ($)', 'Valor': f"${total_costo:,.2f}"},
+            {'Concepto': 'Ganancia Total del Día ($)', 'Valor': f"${total_ganancia:,.2f}"},
+            {'Concepto': 'Promedio por Venta ($)', 'Valor': f"${promedio_venta:,.2f}"},
+            {'Concepto': 'Margen de Ganancia (%)', 'Valor': f"{margen_ganancia:.1f}%"},
+            {'Concepto': 'Productos Únicos Vendidos', 'Valor': len(productos_vendidos)},
+            {'Concepto': 'Producto Más Vendido', 'Valor': f"{producto_mas_vendido[0]} ({producto_mas_vendido[1]['cantidad']} unidades)"},
+            {'Concepto': 'Producto con Mayor Ganancia', 'Valor': f"{producto_mayor_ganancia[0]} (${producto_mayor_ganancia[1]['ganancia']:,.2f})"}
+        ]
+
     def confirmar_eliminar_reportes(self):
         """Confirma la eliminación de todos los reportes de ventas"""
         # Primera confirmación
