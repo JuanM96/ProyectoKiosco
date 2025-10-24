@@ -1,3 +1,9 @@
 tickets/
 dist/
 build/
+*.spec
+kiosco.db
+__pycache__/
+*.pyc
+*.pyo
+*.exe
