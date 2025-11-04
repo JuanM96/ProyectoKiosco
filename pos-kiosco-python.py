@@ -966,6 +966,16 @@ class KioscoPOS:
             cursor='hand2'
         ).pack(side='left', padx=5)
         
+        tk.Button(
+            frame_exportar,
+            text="Exportar Ventas por Mes a Excel",
+            font=('Arial', 10, 'bold'),
+            bg='#16a34a',
+            fg='white',
+            command=self.exportar_ventas_mes_excel,
+            cursor='hand2'
+        ).pack(side='left', padx=5)
+        
         tk.Label(
             frame_exportar,
             text="Turno:",
@@ -2249,6 +2259,430 @@ class KioscoPOS:
                 messagebox.showinfo("Éxito", f"Reporte detallado del {fecha} exportado a:\n{filename}")
         except Exception as e:
             messagebox.showerror("Error", f"Error al exportar: {str(e)}")
+    
+    def obtener_meses_con_ventas(self):
+        """Obtiene la lista de meses que tienen ventas registradas"""
+        try:
+            self.cursor.execute('''
+                SELECT DISTINCT strftime('%Y-%m', fecha) as mes
+                FROM ventas 
+                ORDER BY mes DESC
+            ''')
+            meses = self.cursor.fetchall()
+            return [mes[0] for mes in meses]
+        except Exception as e:
+            print(f"Error al obtener meses con ventas: {e}")
+            return []
+    
+    def seleccionar_mes_ventas(self):
+        """Muestra ventana para seleccionar mes de ventas"""
+        meses_disponibles = self.obtener_meses_con_ventas()
+        
+        if not meses_disponibles:
+            messagebox.showinfo("Sin ventas", "No hay ventas registradas para generar reportes mensuales.")
+            return None
+        
+        # Crear ventana de selección
+        ventana_mes = tk.Toplevel(self.root)
+        ventana_mes.title("Seleccionar Mes para Reporte")
+        ventana_mes.geometry("500x450")  # Tamaño más grande
+        ventana_mes.minsize(500, 450)    # Tamaño mínimo para asegurar visibilidad
+        ventana_mes.configure(bg='#FAF2E3')
+        ventana_mes.grab_set()  # Hacer modal
+        ventana_mes.resizable(True, True)  # Permitir redimensionar
+        
+        # Centrar ventana
+        ventana_mes.transient(self.root)
+        
+        # Centrar ventana en pantalla
+        ventana_mes.update_idletasks()
+        width = ventana_mes.winfo_width()
+        height = ventana_mes.winfo_height()
+        x = (ventana_mes.winfo_screenwidth() // 2) - (width // 2)
+        y = (ventana_mes.winfo_screenheight() // 2) - (height // 2)
+        ventana_mes.geometry(f'{width}x{height}+{x}+{y}')
+        
+        mes_seleccionado = tk.StringVar()
+        
+        # Título
+        tk.Label(
+            ventana_mes,
+            text="Seleccionar Mes para Reporte de Ventas",
+            font=('Arial', 16, 'bold'),
+            bg='#FAF2E3',
+            fg='#2563eb'
+        ).pack(pady=(20, 10))
+        
+        # Instrucciones
+        tk.Label(
+            ventana_mes,
+            text="Elige el mes del cual deseas generar el reporte en Excel:",
+            font=('Arial', 11),
+            bg='#FAF2E3'
+        ).pack(pady=(0, 15))
+        
+        # Frame para lista de meses con altura fija
+        frame_lista = tk.Frame(ventana_mes, bg='#FAF2E3', height=250)
+        frame_lista.pack(fill='both', expand=True, padx=20, pady=(0, 15))
+        frame_lista.pack_propagate(False)  # Mantener altura fija
+        
+        # Scrollbar para la lista
+        scrollbar = tk.Scrollbar(frame_lista)
+        scrollbar.pack(side='right', fill='y')
+        
+        # Listbox con meses disponibles
+        listbox_meses = tk.Listbox(
+            frame_lista,
+            font=('Arial', 11),
+            yscrollcommand=scrollbar.set,
+            selectmode='single'
+        )
+        
+        # Agregar meses con formato mejorado
+        for mes in meses_disponibles:
+            # Convertir formato YYYY-MM a texto más legible
+            try:
+                fecha_obj = datetime.strptime(mes, '%Y-%m')
+                texto_mes = fecha_obj.strftime('%B %Y')  # Ejemplo: "Noviembre 2025"
+                # Traducir meses al español
+                meses_espanol = {
+                    'January': 'Enero', 'February': 'Febrero', 'March': 'Marzo',
+                    'April': 'Abril', 'May': 'Mayo', 'June': 'Junio',
+                    'July': 'Julio', 'August': 'Agosto', 'September': 'Septiembre',
+                    'October': 'Octubre', 'November': 'Noviembre', 'December': 'Diciembre'
+                }
+                for eng, esp in meses_espanol.items():
+                    texto_mes = texto_mes.replace(eng, esp)
+                
+                listbox_meses.insert(tk.END, f"{texto_mes} ({mes})")
+            except:
+                listbox_meses.insert(tk.END, mes)
+        
+        listbox_meses.pack(side='left', fill='both', expand=True)
+        scrollbar.config(command=listbox_meses.yview)
+        
+        # Seleccionar primer item por defecto
+        if meses_disponibles:
+            listbox_meses.selection_set(0)
+        
+        # Frame para botones con altura fija
+        frame_botones = tk.Frame(ventana_mes, bg='#FAF2E3', height=60)
+        frame_botones.pack(fill='x', padx=20, pady=(15, 20))
+        frame_botones.pack_propagate(False)  # Mantener altura fija
+        
+        def generar_reporte():
+            seleccion = listbox_meses.curselection()
+            if seleccion:
+                indice = seleccion[0]
+                mes_elegido = meses_disponibles[indice]
+                mes_seleccionado.set(mes_elegido)
+                ventana_mes.destroy()
+        
+        def cancelar():
+            mes_seleccionado.set("")
+            ventana_mes.destroy()
+        
+        # Botones con mejor diseño y espaciado
+        tk.Button(
+            frame_botones,
+            text="Generar Reporte",
+            font=('Arial', 12, 'bold'),
+            bg='#16a34a',
+            fg='white',
+            command=generar_reporte,
+            cursor='hand2',
+            width=18,
+            height=2
+        ).pack(side='left', padx=(0, 10), pady=10)
+        
+        tk.Button(
+            frame_botones,
+            text="Cancelar",
+            font=('Arial', 12),
+            bg='#dc2626',
+            fg='white',
+            command=cancelar,
+            cursor='hand2',
+            width=18,
+            height=2
+        ).pack(side='right', padx=(10, 0), pady=10)
+        
+        # Esperar a que se cierre la ventana
+        ventana_mes.wait_window()
+        
+        return mes_seleccionado.get() if mes_seleccionado.get() else None
+    
+    def exportar_ventas_mes_excel(self):
+        """Exporta las ventas de un mes específico a Excel con análisis completo"""
+        mes_seleccionado = self.seleccionar_mes_ventas()
+        
+        if not mes_seleccionado:
+            return
+        
+        try:
+            # Formato de nombre de archivo más descriptivo
+            fecha_obj = datetime.strptime(mes_seleccionado, '%Y-%m')
+            nombre_mes = fecha_obj.strftime('%B_%Y').replace('January', 'Enero').replace('February', 'Febrero').replace('March', 'Marzo').replace('April', 'Abril').replace('May', 'Mayo').replace('June', 'Junio').replace('July', 'Julio').replace('August', 'Agosto').replace('September', 'Septiembre').replace('October', 'Octubre').replace('November', 'Noviembre').replace('December', 'Diciembre')
+            
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx")],
+                initialfile=f"reporte_mensual_{nombre_mes}.xlsx"
+            )
+            
+            if filename:
+                from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                
+                # Consulta de ventas del mes
+                self.cursor.execute('''
+                    SELECT 
+                        v.id as venta_id,
+                        v.fecha,
+                        v.usuario,
+                        v.metodo_pago,
+                        v.total as total_venta,
+                        v.costo_total as costo_venta,
+                        (v.total - v.costo_total) as ganancia_venta,
+                        v.turno
+                    FROM ventas v 
+                    WHERE strftime('%Y-%m', v.fecha) = ?
+                    ORDER BY v.fecha DESC
+                ''', (mes_seleccionado,))
+                ventas_mes = self.cursor.fetchall()
+                
+                # Consulta detallada de productos vendidos en el mes
+                self.cursor.execute('''
+                    SELECT 
+                        v.id as venta_id,
+                        v.fecha,
+                        v.usuario,
+                        v.turno,
+                        iv.producto_nombre as producto,
+                        iv.cantidad,
+                        iv.precio_unitario,
+                        iv.costo_unitario,
+                        (iv.cantidad * iv.precio_unitario) as subtotal,
+                        (iv.cantidad * iv.costo_unitario) as costo_subtotal,
+                        ((iv.cantidad * iv.precio_unitario) - (iv.cantidad * iv.costo_unitario)) as ganancia_producto
+                    FROM ventas v
+                    JOIN items_venta iv ON v.id = iv.venta_id
+                    WHERE strftime('%Y-%m', v.fecha) = ?
+                    ORDER BY v.fecha DESC, iv.producto_nombre
+                ''', (mes_seleccionado,))
+                detalle_productos_mes = self.cursor.fetchall()
+                
+                # Crear workbook con formato
+                with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                    
+                    # Hoja 1: Resumen de Ventas del Mes
+                    if ventas_mes:
+                        df_ventas = pd.DataFrame(ventas_mes, columns=[
+                            'ID Venta', 'Fecha y Hora', 'Usuario', 'Método Pago', 
+                            'Total Venta', 'Costo Venta', 'Ganancia Venta', 'Turno'
+                        ])
+                        df_ventas.to_excel(writer, sheet_name='Resumen Ventas Mes', index=False)
+                        
+                        # Formatear hoja de ventas
+                        ws_ventas = writer.sheets['Resumen Ventas Mes']
+                        self._formatear_hoja_excel(ws_ventas, df_ventas, f'Resumen de Ventas - {nombre_mes.replace("_", " ")}')
+                    
+                    # Hoja 2: Detalle de Productos Vendidos
+                    if detalle_productos_mes:
+                        df_detalle = pd.DataFrame(detalle_productos_mes, columns=[
+                            'ID Venta', 'Fecha y Hora', 'Usuario', 'Turno', 'Producto',
+                            'Cantidad', 'Precio Unit.', 'Costo Unit.', 'Subtotal', 
+                            'Costo Subtotal', 'Ganancia por Producto'
+                        ])
+                        df_detalle.to_excel(writer, sheet_name='Detalle Productos Mes', index=False)
+                        
+                        # Formatear hoja de detalle
+                        ws_detalle = writer.sheets['Detalle Productos Mes']
+                        self._formatear_hoja_excel(ws_detalle, df_detalle, f'Detalle de Productos - {nombre_mes.replace("_", " ")}')
+                    
+                    # Hoja 3: Análisis Mensual
+                    analisis_data = self._calcular_analisis_mensual(mes_seleccionado, ventas_mes, detalle_productos_mes)
+                    df_analisis = pd.DataFrame(analisis_data)
+                    df_analisis.to_excel(writer, sheet_name='Análisis Mensual', index=False)
+                    
+                    # Formatear hoja de análisis
+                    ws_analisis = writer.sheets['Análisis Mensual']
+                    self._formatear_hoja_totales(ws_analisis, df_analisis, f'Análisis Financiero Mensual - {nombre_mes.replace("_", " ")}')
+                    
+                    # Hoja 4: Resumen por Días
+                    resumen_dias = self._calcular_resumen_por_dias(mes_seleccionado)
+                    if resumen_dias:
+                        df_dias = pd.DataFrame(resumen_dias)
+                        df_dias.to_excel(writer, sheet_name='Resumen por Días', index=False)
+                        
+                        # Formatear hoja de resumen diario
+                        ws_dias = writer.sheets['Resumen por Días']
+                        self._formatear_hoja_excel(ws_dias, df_dias, f'Resumen Diario - {nombre_mes.replace("_", " ")}')
+
+                messagebox.showinfo("Éxito", f"Reporte mensual de {nombre_mes.replace('_', ' ')} exportado exitosamente a:\n{filename}")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al exportar reporte mensual: {str(e)}")
+    
+    def _calcular_analisis_mensual(self, mes, ventas_mes, detalle_productos_mes):
+        """Calcula análisis completo del mes"""
+        if not ventas_mes:
+            return [{'Concepto': 'Sin ventas registradas en este mes', 'Valor': 'N/A'}]
+        
+        # Convertir mes a formato legible
+        try:
+            fecha_obj = datetime.strptime(mes, '%Y-%m')
+            nombre_mes = fecha_obj.strftime('%B %Y')
+            # Traducir al español
+            meses_espanol = {
+                'January': 'Enero', 'February': 'Febrero', 'March': 'Marzo',
+                'April': 'Abril', 'May': 'Mayo', 'June': 'Junio',
+                'July': 'Julio', 'August': 'Agosto', 'September': 'Septiembre',
+                'October': 'Octubre', 'November': 'Noviembre', 'December': 'Diciembre'
+            }
+            for eng, esp in meses_espanol.items():
+                nombre_mes = nombre_mes.replace(eng, esp)
+        except:
+            nombre_mes = mes
+        
+        # Cálculos básicos
+        total_ventas = len(ventas_mes)
+        total_vendido = sum(v[4] for v in ventas_mes)  # total_venta
+        total_costo = sum(v[5] for v in ventas_mes)    # costo_venta
+        total_ganancia = total_vendido - total_costo
+        
+        # Análisis por días únicos
+        dias_con_ventas = len(set(v[1][:10] for v in ventas_mes))  # fecha (solo día)
+        
+        # Análisis por turno
+        ventas_por_turno = {}
+        for venta in ventas_mes:
+            turno = venta[7]  # turno
+            if turno in ventas_por_turno:
+                ventas_por_turno[turno]['cantidad'] += 1
+                ventas_por_turno[turno]['total'] += venta[4]
+                ventas_por_turno[turno]['ganancia'] += venta[6]
+            else:
+                ventas_por_turno[turno] = {
+                    'cantidad': 1, 
+                    'total': venta[4], 
+                    'ganancia': venta[6]
+                }
+        
+        # Análisis por producto
+        productos_mes = {}
+        for item in detalle_productos_mes:
+            producto = item[4]  # producto
+            cantidad = item[5]  # cantidad
+            ganancia = item[10] # ganancia_producto
+            subtotal = item[8]  # subtotal
+            
+            if producto in productos_mes:
+                productos_mes[producto]['cantidad'] += cantidad
+                productos_mes[producto]['ganancia'] += ganancia
+                productos_mes[producto]['ventas'] += subtotal
+            else:
+                productos_mes[producto] = {
+                    'cantidad': cantidad, 
+                    'ganancia': ganancia,
+                    'ventas': subtotal
+                }
+        
+        # Productos destacados
+        if productos_mes:
+            producto_mas_vendido = max(productos_mes.items(), key=lambda x: x[1]['cantidad'])
+            producto_mayor_ganancia = max(productos_mes.items(), key=lambda x: x[1]['ganancia'])
+            producto_mayor_ventas = max(productos_mes.items(), key=lambda x: x[1]['ventas'])
+        else:
+            producto_mas_vendido = ('N/A', {'cantidad': 0})
+            producto_mayor_ganancia = ('N/A', {'ganancia': 0})
+            producto_mayor_ventas = ('N/A', {'ventas': 0})
+        
+        # Turno más productivo
+        turno_mas_productivo = max(ventas_por_turno.items(), key=lambda x: x[1]['total']) if ventas_por_turno else ('N/A', {'total': 0, 'cantidad': 0})
+        
+        # Promedios
+        promedio_venta = total_vendido / total_ventas if total_ventas > 0 else 0
+        promedio_dia = total_vendido / dias_con_ventas if dias_con_ventas > 0 else 0
+        margen_ganancia = (total_ganancia / total_vendido * 100) if total_vendido > 0 else 0
+        
+        # Crear lista de análisis
+        analisis = [
+            {'Concepto': 'Período del Reporte', 'Valor': nombre_mes},
+            {'Concepto': 'Total de Ventas Realizadas', 'Valor': total_ventas},
+            {'Concepto': 'Días con Ventas', 'Valor': dias_con_ventas},
+            {'Concepto': 'Total Vendido ($)', 'Valor': f"${total_vendido:,.2f}"},
+            {'Concepto': 'Total Costo de Mercadería ($)', 'Valor': f"${total_costo:,.2f}"},
+            {'Concepto': 'Ganancia Total del Mes ($)', 'Valor': f"${total_ganancia:,.2f}"},
+            {'Concepto': 'Promedio por Venta ($)', 'Valor': f"${promedio_venta:,.2f}"},
+            {'Concepto': 'Promedio por Día ($)', 'Valor': f"${promedio_dia:,.2f}"},
+            {'Concepto': 'Margen de Ganancia (%)', 'Valor': f"{margen_ganancia:.1f}%"},
+            {'Concepto': 'Productos Únicos Vendidos', 'Valor': len(productos_mes)},
+            {'Concepto': 'Producto Más Vendido', 'Valor': f"{producto_mas_vendido[0]} ({producto_mas_vendido[1]['cantidad']} unidades)"},
+            {'Concepto': 'Producto con Mayor Ganancia', 'Valor': f"{producto_mayor_ganancia[0]} (${producto_mayor_ganancia[1]['ganancia']:,.2f})"},
+            {'Concepto': 'Producto con Mayores Ventas', 'Valor': f"{producto_mayor_ventas[0]} (${producto_mayor_ventas[1]['ventas']:,.2f})"},
+            {'Concepto': 'Turno Más Productivo', 'Valor': f"{turno_mas_productivo[0]} (${turno_mas_productivo[1]['total']:,.2f} en {turno_mas_productivo[1]['cantidad']} ventas)"}
+        ]
+        
+        # Agregar análisis por turno
+        analisis.append({'Concepto': '--- ANÁLISIS POR TURNO ---', 'Valor': ''})
+        for turno, datos in ventas_por_turno.items():
+            analisis.append({
+                'Concepto': f'Turno {turno}',
+                'Valor': f"{datos['cantidad']} ventas - ${datos['total']:,.2f} - Ganancia: ${datos['ganancia']:,.2f}"
+            })
+        
+        return analisis
+    
+    def _calcular_resumen_por_dias(self, mes):
+        """Calcula resumen de ventas por día del mes"""
+        try:
+            self.cursor.execute('''
+                SELECT 
+                    DATE(fecha) as dia,
+                    COUNT(*) as num_ventas,
+                    SUM(total) as total_dia,
+                    SUM(costo_total) as costo_dia,
+                    SUM(total - costo_total) as ganancia_dia
+                FROM ventas 
+                WHERE strftime('%Y-%m', fecha) = ?
+                GROUP BY DATE(fecha)
+                ORDER BY dia
+            ''', (mes,))
+            
+            resultados = self.cursor.fetchall()
+            
+            resumen_dias = []
+            for resultado in resultados:
+                dia, num_ventas, total_dia, costo_dia, ganancia_dia = resultado
+                
+                # Formatear fecha para mostrar día de la semana
+                try:
+                    fecha_obj = datetime.strptime(dia, '%Y-%m-%d')
+                    dia_semana = fecha_obj.strftime('%A')
+                    # Traducir días al español
+                    dias_espanol = {
+                        'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles',
+                        'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
+                    }
+                    dia_semana = dias_espanol.get(dia_semana, dia_semana)
+                    dia_formateado = f"{dia} ({dia_semana})"
+                except:
+                    dia_formateado = dia
+                
+                resumen_dias.append({
+                    'Fecha': dia_formateado,
+                    'Número de Ventas': num_ventas,
+                    'Total Vendido ($)': f"${total_dia:,.2f}",
+                    'Costo Total ($)': f"${costo_dia:,.2f}",
+                    'Ganancia ($)': f"${ganancia_dia:,.2f}",
+                    'Promedio por Venta ($)': f"${(total_dia/num_ventas):,.2f}" if num_ventas > 0 else "$0.00"
+                })
+            
+            return resumen_dias
+            
+        except Exception as e:
+            print(f"Error al calcular resumen por días: {e}")
+            return []
     
     def _formatear_hoja_excel(self, worksheet, dataframe, titulo):
         """Aplica formato profesional a una hoja de Excel"""
