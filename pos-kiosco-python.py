@@ -1,13 +1,298 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 from fpdf import FPDF
 import os
 import sys
 import logging
 from PIL import Image, ImageTk
+import requests
+import uuid
+import hashlib
+import json
+from pathlib import Path
+
+class LicenseManager:
+    def __init__(self):
+        self.config = self.load_config()
+        self.firebase_url = "https://licenciaskioscopos-default-rtdb.firebaseio.com/"
+        self.license_file = Path("license.json")
+        self.machine_id = self.get_machine_id()
+    
+    def load_config(self):
+        """Carga la configuración desde config.json"""
+        try:
+            # Buscar config.json en la carpeta de licencias
+            config_paths = [
+                Path("license_management/config.json"),
+                Path("config.json")  # fallback
+            ]
+            
+            for config_path in config_paths:
+                if config_path.exists():
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+        except Exception as e:
+            print(f"Error cargando configuración: {e}")
+        
+        # Configuración por defecto si no existe el archivo
+        return {
+            "firebase": {
+                "url": "example.firebaseio.com",
+            },
+            "license": {
+                "offline_tolerance_days": 7,
+                "default_license_months": 1
+            },
+            "support": {
+                "email": "SoporteKiosco@example.com",
+                "phone": "123"
+            }
+        }
+    
+    def get_machine_id(self):
+        """Genera un ID único de la máquina basado en características del hardware"""
+        try:
+            # Combinamos varios identificadores únicos del sistema
+            computer_name = os.environ.get('COMPUTERNAME', '')
+            username = os.environ.get('USERNAME', '')
+            
+            # Creamos un hash único basado en estos valores
+            unique_string = f"{computer_name}_{username}_{sys.platform}"
+            machine_id = hashlib.sha256(unique_string.encode()).hexdigest()[:16]
+            return machine_id
+        except Exception as e:
+            # Si hay algún error, generamos un ID aleatorio
+            return str(uuid.uuid4())[:16]
+    
+    def save_license_locally(self, license_data):
+        """Guarda los datos de licencia localmente"""
+        try:
+            with open(self.license_file, 'w') as f:
+                json.dump(license_data, f)
+        except Exception as e:
+            print(f"Error guardando licencia: {e}")
+    
+    def load_license_locally(self):
+        """Carga los datos de licencia guardados localmente"""
+        try:
+            if self.license_file.exists():
+                with open(self.license_file, 'r') as f:
+                    return json.load(f)
+            return None
+        except Exception as e:
+            print(f"Error cargando licencia local: {e}")
+            return None
+    
+    def check_and_update_expired_license(self, license_data):
+        """Desactiva automáticamente licencias expiradas en Firebase"""
+        if not license_data:
+            return None
+        
+        try:
+            expiry_date = datetime.fromisoformat(license_data.get('expiry_date', ''))
+            current_date = datetime.now()
+            
+            # Si la licencia expiró Y sigue activa, desactivarla
+            if current_date > expiry_date and license_data.get('active', False):
+                print("🔄 Licencia expirada detectada, desactivando...")
+                
+                # Actualizar solo el campo 'active' en Firebase
+                url = f"{self.firebase_url}/licenses/{self.machine_id}/active.json"
+                response = requests.put(url, json=False, timeout=5)
+                
+                if response.status_code == 200:
+                    # Actualizar datos locales
+                    license_data['active'] = False
+                    self.save_license_locally(license_data)
+                    print("✅ Licencia desactivada automáticamente")
+                else:
+                    print(f"⚠️ No se pudo desactivar en Firebase: {response.status_code}")
+                    
+            return license_data
+        except Exception as e:
+            print(f"Error verificando expiración: {e}")
+            return license_data
+
+    def check_license_firebase(self):
+        """Verifica la licencia en Firebase y actualiza si expiró"""
+        try:
+            url = f"{self.firebase_url}/licenses/{self.machine_id}.json"
+            response = requests.get(url, timeout=10)
+            
+            if response.status_code == 200:
+                license_data = response.json()
+                if license_data:
+                    # Verificar y actualizar si expiró
+                    return self.check_and_update_expired_license(license_data)
+            return None
+        except Exception as e:
+            print(f"Error conectando con Firebase: {e}")
+            return None
+    
+    def is_license_valid(self, license_data):
+        """Verifica si la licencia está vigente"""
+        if not license_data:
+            return False
+        
+        try:
+            expiry_date = datetime.fromisoformat(license_data.get('expiry_date', ''))
+            current_date = datetime.now()
+            
+            is_active = license_data.get('active', False)
+            is_not_expired = current_date <= expiry_date
+            
+            return is_active and is_not_expired
+        except Exception as e:
+            print(f"Error validando licencia: {e}")
+            return False
+    
+    def validate_license(self):
+        """Método principal para validar la licencia"""
+        # Primero intentamos verificar online
+        online_license = self.check_license_firebase()
+        
+        if online_license:
+            # Si encontramos licencia online, la guardamos localmente
+            self.save_license_locally(online_license)
+            return self.is_license_valid(online_license)
+        
+        # Si no hay conexión, verificamos la licencia local
+        local_license = self.load_license_locally()
+        if local_license:
+            # Verificamos que no haya expirado hace más de 7 días (tolerancia)
+            if self.is_license_valid_offline(local_license):
+                return True
+        
+        return False
+    
+    def is_license_valid_offline(self, license_data):
+        """Verifica la licencia offline con tolerancia configurable"""
+        if not license_data:
+            return False
+        
+        try:
+            expiry_date = datetime.fromisoformat(license_data.get('expiry_date', ''))
+            current_date = datetime.now()
+            
+            # Tolerancia configurable para validación offline
+            tolerance_days = self.config['license']['offline_tolerance_days']
+            tolerance = timedelta(days=tolerance_days)
+            is_active = license_data.get('active', False)
+            is_within_tolerance = current_date <= (expiry_date + tolerance)
+            
+            return is_active and is_within_tolerance
+        except Exception as e:
+            print(f"Error validando licencia offline: {e}")
+            return False
+    
+    def show_license_error(self, root):
+        """Muestra el diálogo de error de licencia"""
+        error_window = tk.Toplevel(root)
+        error_window.title("Error de Licencia")
+        error_window.geometry("420x350")
+        error_window.configure(bg="#F8F8F8")
+        error_window.resizable(False, False)
+        
+        # Centrar la ventana
+        error_window.transient(root)
+        error_window.grab_set()
+        
+        # Icono de error
+        try:
+            error_window.iconbitmap("img/kiosco.ico")
+        except:
+            pass
+        
+        # Frame principal con scrollbar si es necesario
+        main_frame = tk.Frame(error_window, bg="#F8F8F8")
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Título
+        title_label = tk.Label(
+            main_frame,
+            text="⚠️ Licencia No Válida",
+            font=("Arial", 16, "bold"),
+            fg="#D32F2F",
+            bg="#F8F8F8"
+        )
+        title_label.pack(pady=(0, 10))
+        
+        # Mensaje
+        message_label = tk.Label(
+            main_frame,
+            text="Su licencia ha expirado o no es válida.\n\n"
+                 "Para continuar usando el software,\n"
+                 "contacte con soporte técnico.\n\n"
+                 f"ID de Máquina: {self.machine_id}",
+            font=("Arial", 10),
+            fg="#333333",
+            bg="#F8F8F8",
+            justify="center"
+        )
+        message_label.pack(pady=(0, 15))
+        
+        # Información de contacto
+        contact_info = self.config['support']
+        contact_frame = tk.Frame(main_frame, bg="#E3F2FD", relief="solid", bd=1)
+        contact_frame.pack(pady=(0, 15), padx=5, fill="x")
+        
+        contact_title = tk.Label(
+            contact_frame,
+            text="Para contactar al soporte:",
+            font=("Arial", 10, "bold"),
+            fg="#1976D2",
+            bg="#E3F2FD"
+        )
+        contact_title.pack(pady=(8, 3))
+        
+        email_label = tk.Label(
+            contact_frame,
+            text=f"Email: {contact_info['email']}",
+            font=("Arial", 9),
+            fg="#333333",
+            bg="#E3F2FD"
+        )
+        email_label.pack(pady=1)
+        
+        phone_label = tk.Label(
+            contact_frame,
+            text=f"Cel: {contact_info['phone']}",
+            font=("Arial", 9),
+            fg="#333333",
+            bg="#E3F2FD"
+        )
+        phone_label.pack(pady=(1, 8))
+        
+        # Frame para el botón (para asegurar que aparezca)
+        button_frame = tk.Frame(main_frame, bg="#F8F8F8", height=50)
+        button_frame.pack(pady=(10, 0), fill="x")
+        button_frame.pack_propagate(False)  # Mantener altura fija
+        
+        # Botón Aceptar (cerrar) - centrado
+        accept_button = tk.Button(
+            button_frame,
+            text="Aceptar",
+            font=("Arial", 11, "bold"),
+            bg="#D32F2F",
+            fg="white",
+            padx=30,
+            pady=10,
+            cursor="hand2",
+            command=lambda: self.close_application(root)
+        )
+        accept_button.place(relx=0.5, rely=0.5, anchor="center")  # Centrado absoluto
+        
+        # Manejar el cierre de ventana
+        error_window.protocol("WM_DELETE_WINDOW", lambda: self.close_application(root))
+    
+    def close_application(self, root):
+        """Cierra la aplicación"""
+        root.quit()
+        root.destroy()
+        sys.exit()
 
 class KioscoPOS:
     def __init__(self, root):
@@ -28,6 +313,12 @@ class KioscoPOS:
         except Exception as e:
             print(f"No se pudo cargar el ícono: {e}")
             # Continúa sin ícono si hay error
+        
+        # Verificar licencia antes de continuar
+        self.license_manager = LicenseManager()
+        if not self.verify_license():
+            return  # Si no hay licencia válida, no continúa
+        
         # Usuario actual
         self.usuario_actual = None
         
@@ -40,6 +331,15 @@ class KioscoPOS:
         # Mostrar login
         self.mostrar_login()
         logging.basicConfig(level=logging.INFO, format='%(message)s')
+    
+    def verify_license(self):
+        """Verifica la licencia antes de mostrar la aplicación"""
+        if self.license_manager.validate_license():
+            return True
+        else:
+            # Mostrar ventana de error y cerrar aplicación
+            self.license_manager.show_license_error(self.root)
+            return False
         
     def get_resource_path(self, *args):
         """Obtiene la ruta correcta para recursos tanto en desarrollo como en ejecutable"""

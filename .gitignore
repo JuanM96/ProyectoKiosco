@@ -1,9 +1,192 @@
+# 🚫 CONFIGURACIÓN GITIGNORE - SISTEMA POS KIOSCO
+# ===================================================
+
+# 🔐 ARCHIVOS DE CONFIGURACIÓN Y CREDENCIALES (CRÍTICO)
+# -------------------------------------------------------
+license_management/config.json
+license_management/firebase-admin-key.json
+license_management/serviceAccountKey.json
+license_management/firebase-adminsdk*.json
+license_management/license_*.json
+
+# 💾 BASES DE DATOS LOCALES
+# -------------------------
+kiosco.db
+*.db
+*.sqlite
+*.sqlite3
+
+# 📄 ARCHIVOS DE LICENCIAS LOCALES
+# --------------------------------
+license.json
+*.license
+
+# 🏗️ ARCHIVOS DE BUILD Y DISTRIBUCIÓN
+# -----------------------------------
 tickets/
 dist/
 build/
 *.spec
-kiosco.db
-__pycache__/
-*.pyc
-*.pyo
 *.exe
+*.msi
+*.dmg
+*.pkg
+
+# 🐍 ARCHIVOS PYTHON
+# ------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.tox/
+.nox/
+.coverage
+.pytest_cache/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# 📁 DIRECTORIOS DE ENTORNOS VIRTUALES
+# ------------------------------------
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.env
+.venv
+
+# 💻 ARCHIVOS DEL SISTEMA OPERATIVO
+# ---------------------------------
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+
+# 🔧 ARCHIVOS DE IDEs Y EDITORES
+# ------------------------------
+# VS Code
+.vscode/settings.json
+.vscode/tasks.json
+.vscode/launch.json
+.vscode/extensions.json
+.vscode/*.code-workspace
+
+# PyCharm
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Sublime Text
+*.tmlanguage.cache
+*.tmPreferences.cache
+*.stTheme.cache
+*.sublime-workspace
+*.sublime-project
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+# 📊 ARCHIVOS DE LOGS Y TEMPORALES
+# --------------------------------
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+*.rej
+*.out
+*.pid
+*.lock
+
+# 📈 ARCHIVOS DE TESTING Y DESARROLLO
+# -----------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# 📦 DEPENDENCIAS Y NODE MODULES (si usas)
+# ----------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 🎯 ARCHIVOS ESPECÍFICOS DEL PROYECTO
+# ------------------------------------
+# Respaldos de tickets
+tickets/*.pdf
+tickets/*.txt
+
+# Imágenes temporales
+img/temp*
+img/backup*
+
+# Configuraciones de usuario específicas
+user_config.json
+local_settings.json
+
+# 📤 ARCHIVOS DE DEPLOYMENT
+# -------------------------
+*.zip
+*.rar
+*.tar.gz
+*.7z
+
+# 📋 NOTAS Y DOCUMENTOS TEMPORALES
+# --------------------------------
+TODO.txt
+NOTES.txt
+*.draft
+
+# 🔄 ARCHIVOS DE SINCRONIZACIÓN
+# -----------------------------
+.sync-conflict-*
+
+# ===================================================
+# ✅ ARCHIVOS QUE SÍ SE INCLUYEN EN EL REPOSITORIO:
+# ===================================================
+# - pos-kiosco-python.py (aplicación principal)
+# - license_launcher.py (launcher de licencias)
+# - README.md (documentación principal)
+# - license_management/README.md (documentación de licencias)
+# - license_management/FIREBASE_SETUP_GUIDE.md
+# - license_management/FIREBASE_ADMIN_SETUP.md
+# - license_management/*.py (herramientas de licencias)
+# - img/*.ico, img/*.png (recursos gráficos)
+# - Este .gitignore
