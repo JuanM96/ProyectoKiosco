@@ -113,11 +113,26 @@ class SecureLicenseAdmin:
             machine_id = self.generate_machine_id(computer_name, username)
             expiry_date = datetime.now() + timedelta(days=30 * months)
             
+            # Verificar si ya existe una licencia para esta máquina
+            license_ref = self.db_ref.child('licenses').child(machine_id)
+            existing_license = license_ref.get()
+            
+            if existing_license:
+                print(f"⚠️ Ya existe una licencia para esta máquina")
+                print(f"   Máquina: {existing_license.get('computer_name', 'N/A')}")
+                print(f"   Usuario: {existing_license.get('username', 'N/A')}")
+                
+                # Preguntar si quiere extender en lugar de sobrescribir
+                print("💡 ¿Quieres extender la licencia existente en lugar de crear una nueva?")
+                choice = input("   (s/N): ").strip().lower()
+                if choice == 's':
+                    return self.extend_license(machine_id, months)
+            
             license_data = {
                 "machine_id": machine_id,
                 "computer_name": computer_name,
                 "username": username,
-                "active": True,
+                "active": True,  # Siempre activa para licencias nuevas
                 "created_date": datetime.now().isoformat(),
                 "expiry_date": expiry_date.isoformat(),
                 "months": months
@@ -211,15 +226,22 @@ class SecureLicenseAdmin:
                     current_expiry = datetime.fromisoformat(license_data['expiry_date'])
                     new_expiry = current_expiry + timedelta(days=30 * additional_months)
                     
-                    # Actualizar
+                    # Actualizar datos
                     license_data['expiry_date'] = new_expiry.isoformat()
                     license_data['months'] = license_data.get('months', 1) + additional_months
                     license_data['last_extended'] = datetime.now().isoformat()
+                    
+                    # 🔧 CORRECCIÓN: Reactivar la licencia si se extiende a una fecha futura válida
+                    current_date = datetime.now()
+                    if new_expiry > current_date:
+                        license_data['active'] = True
+                        print("🔄 Licencia reactivada automáticamente")
                     
                     license_ref.set(license_data)
                     
                     print(f"✅ Licencia extendida exitosamente!")
                     print(f"   Nueva fecha: {new_expiry.strftime('%Y-%m-%d %H:%M:%S')}")
+                    print(f"   Estado: {'🟢 ACTIVA' if license_data['active'] else '🔴 INACTIVA'}")
                     return True
                 else:
                     print(f"❌ No se encontró la licencia: {machine_id}")
@@ -230,6 +252,41 @@ class SecureLicenseAdmin:
                 
         except Exception as e:
             print(f"❌ Error extendiendo licencia: {e}")
+            return False
+    
+    def deactivate_license(self, machine_id):
+        """Desactiva una licencia específica"""
+        try:
+            if not self.use_admin_sdk:
+                print("❌ Desactivar licencia requiere Firebase Admin SDK")
+                return False
+                
+            # Obtener licencia actual
+            license_ref = self.db_ref.child('licenses').child(machine_id)
+            license_data = license_ref.get()
+            
+            if not license_data:
+                print(f"❌ No se encontró la licencia: {machine_id}")
+                return False
+            
+            # Verificar estado actual
+            if not license_data.get('active', True):
+                print(f"⚠️ La licencia ya está desactivada")
+                return True
+            
+            # Desactivar licencia
+            license_data['active'] = False
+            license_data['deactivated_date'] = datetime.now().isoformat()
+            
+            license_ref.set(license_data)
+            
+            print(f"✅ Licencia desactivada exitosamente!")
+            print(f"   ID: {machine_id}")
+            print(f"   Fecha desactivación: {license_data['deactivated_date']}")
+            return True
+                
+        except Exception as e:
+            print(f"❌ Error desactivando licencia: {e}")
             return False
     
     def check_license(self, machine_id):
@@ -309,6 +366,52 @@ class SecureLicenseAdmin:
         except Exception as e:
             print(f"❌ Error listando licencias: {e}")
     
+    def reactivate_license(self, machine_id):
+        """Reactiva una licencia desactivada si aún está vigente"""
+        try:
+            if not self.use_admin_sdk:
+                print("❌ Reactivar licencia requiere Firebase Admin SDK")
+                return False
+                
+            # Obtener licencia actual
+            license_ref = self.db_ref.child('licenses').child(machine_id)
+            license_data = license_ref.get()
+            
+            if not license_data:
+                print(f"❌ No se encontró la licencia: {machine_id}")
+                return False
+            
+            # Verificar si la licencia está vigente por fecha
+            try:
+                expiry_date = datetime.fromisoformat(license_data['expiry_date'])
+                current_date = datetime.now()
+                
+                if current_date <= expiry_date:
+                    # La licencia está vigente, se puede reactivar
+                    license_data['active'] = True
+                    license_data['reactivated_date'] = current_date.isoformat()
+                    
+                    license_ref.set(license_data)
+                    
+                    days_left = (expiry_date - current_date).days
+                    print(f"✅ Licencia reactivada exitosamente!")
+                    print(f"   Expira: {expiry_date.strftime('%Y-%m-%d %H:%M:%S')}")
+                    print(f"   Días restantes: {days_left}")
+                    return True
+                else:
+                    print(f"❌ No se puede reactivar - licencia expirada")
+                    print(f"   Expiró: {expiry_date.strftime('%Y-%m-%d %H:%M:%S')}")
+                    print("💡 Usa 'Extender licencia' para agregar más tiempo")
+                    return False
+                    
+            except Exception as e:
+                print(f"❌ Error verificando fecha de expiración: {e}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error reactivando licencia: {e}")
+            return False
+    
     def show_setup_instructions(self):
         """Muestra instrucciones de configuración"""
         print("\n📖 CONFIGURACIÓN FIREBASE ADMIN SDK")
@@ -335,9 +438,11 @@ def main():
         print("2. 🔍 Verificar licencia específica")
         print("3. 📋 Listar todas las licencias")
         print("4. ⏰ Extender licencia")
-        print("5. 💡 Generar ID de máquina")
-        print("6. 📖 Configurar Firebase Admin SDK")
-        print("7. 🚪 Salir")
+        print("5. ❌ Desactivar licencia")
+        print("6. ✅ Reactivar licencia")
+        print("7. 💡 Generar ID de máquina")
+        print("8. 📖 Configurar Firebase Admin SDK")
+        print("9. 🚪 Salir")
         
         try:
             choice = input("\n➡️ Seleccione una opción (1-7): ").strip()
@@ -389,6 +494,32 @@ def main():
                     print("❌ Debe proporcionar un ID de máquina")
         
         elif choice == '5':
+            if not admin.use_admin_sdk:
+                print("❌ Desactivar licencias requiere Firebase Admin SDK")
+                print("💡 Configura Admin SDK primero (opción 8)")
+            else:
+                print("\n❌ DESACTIVAR LICENCIA")
+                machine_id = input("ID de máquina a desactivar: ").strip()
+                
+                if machine_id:
+                    admin.deactivate_license(machine_id)
+                else:
+                    print("❌ Debe proporcionar un ID de máquina")
+        
+        elif choice == '6':
+            if not admin.use_admin_sdk:
+                print("❌ Reactivar licencias requiere Firebase Admin SDK")
+                print("💡 Configura Admin SDK primero (opción 8)")
+            else:
+                print("\n✅ REACTIVAR LICENCIA")
+                machine_id = input("ID de máquina a reactivar: ").strip()
+                
+                if machine_id:
+                    admin.reactivate_license(machine_id)
+                else:
+                    print("❌ Debe proporcionar un ID de máquina")
+        
+        elif choice == '7':
             print("\n💡 GENERAR ID DE MÁQUINA")
             computer_name = input("Nombre del computador: ").strip()
             username = input("Nombre de usuario: ").strip()
@@ -399,10 +530,10 @@ def main():
             else:
                 print("❌ Debe proporcionar computer name y username")
         
-        elif choice == '6':
+        elif choice == '8':
             admin.show_setup_instructions()
         
-        elif choice == '7':
+        elif choice == '9':
             print("\n👋 ¡Hasta luego!")
             break
         
