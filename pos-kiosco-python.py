@@ -756,16 +756,27 @@ class KioscoPOS:
         ).pack(pady=5)
         
         metodos = ['Efectivo', 'Transferencia', 'Débito', 'Crédito']
-        for metodo in metodos:
-            tk.Button(
+        keys = ['F1', 'F2', 'F3', 'F4']
+        for i, metodo in enumerate(metodos):
+            key = keys[i] if i < len(keys) else ''
+            btn_text = f"{key}  Cobrar - {metodo}"
+            btn = tk.Button(
                 frame_der,
-                text=f"Cobrar - {metodo}",
+                text=btn_text,
                 font=('Arial', 11, 'bold'),
                 bg='#16a34a',
                 fg='white',
-                command=lambda m=metodo: self.finalizar_venta(m),
+                command=lambda m=metodo: self.cobrar_metodo(m),
                 cursor='hand2'
-            ).pack(fill='x', pady=2)
+            )
+            btn.pack(fill='x', pady=2)
+            # Bind keyboard shortcut to the root window
+            if key:
+                try:
+                    # Use lambda with default arg to avoid late binding
+                    self.root.bind(f'<{key}>', lambda e, m=metodo: self.cobrar_metodo(m))
+                except Exception:
+                    pass
         
         # Cargar productos
         self.actualizar_lista_productos()
@@ -894,6 +905,14 @@ class KioscoPOS:
             font=('Arial', 14, 'bold'),
             bg='#FAF2E3'
         ).pack(pady=10)
+
+        # Campo de búsqueda para productos (filtra la tabla de productos)
+        search_frame = tk.Frame(frame_lista_prod, bg='#FAF2E3')
+        search_frame.pack(fill='x', padx=5, pady=(0, 8))
+        tk.Label(search_frame, text="Buscar:", font=('Arial', 10), bg='#FAF2E3').pack(side='left', padx=(0, 6))
+        self.entry_buscar_productos = tk.Entry(search_frame, font=('Arial', 10), width=40)
+        self.entry_buscar_productos.pack(side='left', fill='x', expand=True)
+        self.entry_buscar_productos.bind('<KeyRelease>', lambda e: self.actualizar_tabla_productos())
         
         # Tabla de productos
         frame_tabla = tk.Frame(frame_lista_prod, bg='#FAF2E3')
@@ -951,6 +970,15 @@ class KioscoPOS:
             command=self.editar_producto,
             cursor='hand2'
         ).pack(side='left', padx=5)
+        tk.Button(
+            frame_acciones,
+            text="Duplicar Seleccionado",
+            font=('Arial', 10),
+            bg='#0ea5e9',
+            fg='white',
+            command=self.duplicar_producto,
+            cursor='hand2'
+        ).pack(side='left', padx=5)
         
         tk.Button(
             frame_acciones,
@@ -993,7 +1021,7 @@ class KioscoPOS:
         # Botón para eliminar todos los productos (peligroso)
         tk.Button(
             frame_acciones,
-            text="ELIMINAR TODOS LOS PRODUCTOS",
+            text="ELIMINAR TODO",
             font=('Arial', 10, 'bold'),
             bg='#dc2626',
             fg='white',
@@ -1001,7 +1029,7 @@ class KioscoPOS:
             cursor='hand2',
             relief='raised',
             bd=3,
-            width=30
+            width=16
         ).pack(side='right', padx=10)
         # Cargar productos
         self.actualizar_tabla_productos()
@@ -1630,6 +1658,131 @@ class KioscoPOS:
             self.actualizar_lista_productos()
 
         messagebox.showinfo("Stock actualizado", "El stock fue actualizado correctamente (sin registrar venta).")
+    def cobrar_metodo(self, metodo):
+        """Wrapper para procesar cobros: confirma para no-efectivo, ventana especial para efectivo."""
+        # Calcular total actual del carrito
+        if not self.carrito:
+            messagebox.showwarning("Carrito Vacío", "El carrito está vacío")
+            return
+
+        total = sum(item['precio'] * item['cantidad'] for item in self.carrito)
+
+        if metodo and metodo.lower() == 'efectivo':
+            # Mostrar diálogo para ingresar el pago y calcular vuelto
+            self.mostrar_dialogo_efectivo(total, metodo)
+        else:
+            # Confirmar para otros métodos con diálogo que acepta F1
+            self.mostrar_dialogo_confirmacion(total, metodo)
+
+    def mostrar_dialogo_efectivo(self, total, metodo='Efectivo'):
+        """Muestra una ventana modal para ingresar pago en efectivo y calcular vuelto en vivo."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Cobro en Efectivo")
+        dlg.geometry("360x200")
+        dlg.configure(bg='#FAF2E3')
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        tk.Label(dlg, text=f"Total a pagar: ${total:.2f}", font=('Arial', 12, 'bold'), bg='#FAF2E3').pack(pady=(12,6))
+
+        frame_pago = tk.Frame(dlg, bg='#FAF2E3')
+        frame_pago.pack(pady=6, padx=10, fill='x')
+
+        tk.Label(frame_pago, text="Pago recibido:", font=('Arial', 10), bg='#FAF2E3').pack(anchor='w')
+        entry_pago = tk.Entry(frame_pago, font=('Arial', 12))
+        entry_pago.pack(fill='x', pady=4)
+
+        label_vuelto = tk.Label(dlg, text="Vuelto: $0.00", font=('Arial', 12, 'bold'), bg='#FAF2E3')
+        label_vuelto.pack(pady=6)
+
+        def actualizar_vuelto(event=None):
+            val = entry_pago.get().strip()
+            # Si el campo está vacío, mostrar vuelto como '-' (opcional para el empleado)
+            if val == '':
+                label_vuelto.config(text="Vuelto: -")
+                return
+            try:
+                pago = float(val)
+            except Exception:
+                label_vuelto.config(text="Vuelto: -")
+                return
+            vuelto = pago - total
+            label_vuelto.config(text=f"Vuelto: ${vuelto:.2f}")
+
+        entry_pago.bind('<KeyRelease>', actualizar_vuelto)
+
+        def confirmar():
+            val = entry_pago.get().strip()
+            # Campo vacío -> proceder igual (el cálculo de vuelto es opcional)
+            if val == '':
+                dlg.grab_release()
+                dlg.destroy()
+                self.finalizar_venta(metodo)
+                return
+
+            # Si llenaron algo, validar que sea numérico
+            try:
+                pago = float(val)
+            except Exception:
+                messagebox.showerror("Error", "Ingrese un monto válido para el pago")
+                return
+
+            # Si el pago es menor al total, preguntar si registrar igual
+            #if pago < total:
+            #    if not messagebox.askyesno("Pago insuficiente", "El pago ingresado es menor al total. ¿Desea registrar la venta igual?", icon='warning'):
+            #        return
+
+            dlg.grab_release()
+            dlg.destroy()
+            # Proceder con la venta
+            self.finalizar_venta(metodo)
+
+        frame_bot = tk.Frame(dlg, bg='#FAF2E3')
+        frame_bot.pack(pady=8, fill='x', padx=10)
+
+        tk.Button(frame_bot, text="Confirmar Cobro", bg='#16a34a', fg='white', font=('Arial', 10, 'bold'), command=confirmar).pack(side='left', expand=True, fill='x', padx=5)
+        tk.Button(frame_bot, text="Cancelar", bg='#ef4444', fg='white', font=('Arial', 10), command=lambda: (dlg.grab_release(), dlg.destroy())).pack(side='left', expand=True, fill='x', padx=5)
+
+        entry_pago.focus_set()
+        # Inicializar vuelto
+        actualizar_vuelto()
+        # Permitir confirmar con F1 dentro del diálogo
+        try:
+            # Bind F1 to confirmar and F2 to cancelar inside the dialog. Return 'break' to stop propagation to root bindings.
+            dlg.bind('<F1>', lambda e: (confirmar(), 'break'))
+            dlg.bind('<F2>', lambda e: (dlg.grab_release(), dlg.destroy(), 'break'))
+        except Exception:
+            pass
+
+    def mostrar_dialogo_confirmacion(self, total, metodo=''):
+        """Muestra un diálogo modal de confirmación con la posibilidad de confirmar con F1."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Confirmar Cobro")
+        dlg.geometry("360x150")
+        dlg.configure(bg='#FAF2E3')
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        tk.Label(dlg, text=f"Confirmar cobro por {metodo}", font=('Arial', 12, 'bold'), bg='#FAF2E3').pack(pady=(12,6))
+        tk.Label(dlg, text=f"Total: ${total:.2f}", font=('Arial', 11), bg='#FAF2E3').pack(pady=(0,8))
+
+        def confirmar():
+            dlg.grab_release()
+            dlg.destroy()
+            self.finalizar_venta(metodo)
+
+        frame_bot = tk.Frame(dlg, bg='#FAF2E3')
+        frame_bot.pack(pady=8, fill='x', padx=10)
+
+        tk.Button(frame_bot, text="F1  Confirmar", bg='#16a34a', fg='white', font=('Arial', 10, 'bold'), command=confirmar).pack(side='left', expand=True, fill='x', padx=5)
+        tk.Button(frame_bot, text="F2  Cancelar", bg='#ef4444', fg='white', font=('Arial', 10), command=lambda: (dlg.grab_release(), dlg.destroy())).pack(side='left', expand=True, fill='x', padx=5)
+
+        # Bind F1 to confirmar and F2 to cancelar inside the dialog. Return 'break' to stop propagation to root bindings.
+        try:
+            dlg.bind('<F1>', lambda e: (confirmar(), 'break'))
+            dlg.bind('<F2>', lambda e: (dlg.grab_release(), dlg.destroy(), 'break'))
+        except Exception:
+            pass
     def finalizar_venta(self, metodo_pago):
         """Finaliza la venta y la registra"""
         if not self.carrito:
@@ -1836,8 +1989,21 @@ class KioscoPOS:
         """Actualiza la tabla de productos"""
         for item in self.tabla_productos.get_children():
             self.tabla_productos.delete(item)
-        
-        self.cursor.execute('SELECT * FROM productos ORDER BY nombre')
+        # Soporte para filtro de búsqueda si el campo existe
+        if hasattr(self, 'entry_buscar_productos'):
+            filtro = self.entry_buscar_productos.get().lower().strip()
+            if filtro:
+                # Buscar por nombre, categoría o código de barras
+                self.cursor.execute('''
+                    SELECT * FROM productos
+                    WHERE LOWER(nombre) LIKE ? OR LOWER(categoria) LIKE ? OR LOWER(COALESCE(codigo_barras, '')) LIKE ?
+                    ORDER BY nombre
+                ''', (f'%{filtro}%', f'%{filtro}%', f'%{filtro}%'))
+            else:
+                self.cursor.execute('SELECT * FROM productos ORDER BY nombre')
+        else:
+            self.cursor.execute('SELECT * FROM productos ORDER BY nombre')
+
         productos = self.cursor.fetchall()
         
         for producto in productos:
@@ -1934,6 +2100,59 @@ class KioscoPOS:
             if hasattr(self, 'actualizar_lista_productos'):
                 self.actualizar_lista_productos()
             messagebox.showinfo("Éxito", "Producto eliminado correctamente")
+    def duplicar_producto(self):
+        """Duplica el producto seleccionado creando una copia con nombre único"""
+        seleccion = self.tabla_productos.selection()
+        if not seleccion:
+            messagebox.showwarning("Selección", "Por favor selecciona un producto para duplicar")
+            return
+
+        item = self.tabla_productos.item(seleccion[0])
+        valores = item['values']
+        producto_id = valores[0]
+
+        self.cursor.execute('SELECT * FROM productos WHERE id = ?', (producto_id,))
+        producto = self.cursor.fetchone()
+        if not producto:
+            messagebox.showerror("Error", "No se pudo encontrar el producto seleccionado en la base de datos")
+            return
+
+        nombre_original = producto[1]
+        nuevo_nombre = f"{nombre_original} - copia"
+        base_name = nuevo_nombre
+        contador = 1
+        # Asegurar que el nombre sea único (campo nombre es UNIQUE)
+        while True:
+            self.cursor.execute('SELECT id FROM productos WHERE nombre = ?', (nuevo_nombre,))
+            if not self.cursor.fetchone():
+                break
+            nuevo_nombre = f"{base_name} ({contador})"
+            contador += 1
+
+        precio = producto[2]
+        costo = producto[3]
+        stock = producto[4]
+        categoria = producto[5]
+        codigo_barras = producto[6]
+
+        self.cursor.execute('''
+            INSERT INTO productos (nombre, precio, costo, stock, categoria, codigo_barras)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (nuevo_nombre, precio, costo, stock, categoria, codigo_barras))
+
+        # Mantener consistencia con el flujo de inserción existente (reorganizar IDs si existe)
+        if hasattr(self, 'reorganizar_ids_productos'):
+            try:
+                self.reorganizar_ids_productos(auto_commit=False)
+            except Exception:
+                pass
+
+        self.conn.commit()
+
+        messagebox.showinfo("Éxito", f"Producto duplicado como: {nuevo_nombre}")
+        self.actualizar_tabla_productos()
+        if hasattr(self, 'actualizar_lista_productos'):
+            self.actualizar_lista_productos()
     def ordenar_tabla_productos(self, col, reverse=False):
         """Ordena la tabla de productos por la columna seleccionada"""
         l = [(self.tabla_productos.set(k, col), k) for k in self.tabla_productos.get_children('')]
