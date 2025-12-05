@@ -47,8 +47,8 @@ class LicenseManager:
                 "default_license_months": 1
             },
             "support": {
-                "email": "SoporteKiosco@example.com",
-                "phone": "123"
+                "email": "juanignaciomurcia@gmail.com",   # Reemplazar con email real
+                "phone": "1123909301"   # Reemplazar con teléfono real
             }
         }
     
@@ -327,6 +327,8 @@ class KioscoPOS:
         
         # Carrito de compras
         self.carrito = []
+        # Atajos globales habilitados por defecto (se deshabilitan mientras hay diálogos modales abiertos)
+        self.shortcuts_enabled = True
         
         # Mostrar login
         self.mostrar_login()
@@ -770,16 +772,34 @@ class KioscoPOS:
                 cursor='hand2'
             )
             btn.pack(fill='x', pady=2)
-            # Bind keyboard shortcut to the root window
+            # Bind keyboard shortcut to the root window via central handler
             if key:
                 try:
                     # Use lambda with default arg to avoid late binding
-                    self.root.bind(f'<{key}>', lambda e, m=metodo: self.cobrar_metodo(m))
+                    self.root.bind(f'<{key}>', lambda e, m=metodo: self._handle_global_shortcut(e, m))
                 except Exception:
                     pass
         
         # Cargar productos
         self.actualizar_lista_productos()
+
+    def _handle_global_shortcut(self, event, metodo):
+        """Handler central para atajos de teclado (F1-F4).
+        Respeta `self.shortcuts_enabled` para evitar que atajos globales
+        se ejecuten mientras hay un diálogo modal abierto.
+        """
+        # Si los atajos están deshabilitados, no consumir el evento
+        # así el diálogo modal (si existe) puede recibir la tecla.
+        if not getattr(self, 'shortcuts_enabled', True):
+            return None
+
+        try:
+            # Ejecutar el método de cobro asociado
+            self.cobrar_metodo(metodo)
+        except Exception:
+            pass
+        # Consumir la tecla para evitar dobles ejecuciones
+        return 'break'
     
     def crear_pestaña_productos(self):
         """Crea la pestaña de gestión de productos"""
@@ -861,7 +881,7 @@ class KioscoPOS:
             frame_form,
             font=('Arial', 11),
             width=28,
-            values=['Bebidas', 'Golosinas', 'Snacks', 'Cigarrillos', 'Lácteos', 'Panificados', 'Limpieza', 'Otros']
+            values=['Bebidas', 'Golosinas', 'Snacks', 'Cigarrillos', 'Lácteos', 'Panificados', 'Limpieza', 'Helados', 'Otros']
         )
         self.prod_categoria.pack(pady=2)
         
@@ -1676,12 +1696,31 @@ class KioscoPOS:
 
     def mostrar_dialogo_efectivo(self, total, metodo='Efectivo'):
         """Muestra una ventana modal para ingresar pago en efectivo y calcular vuelto en vivo."""
+        # Deshabilitar atajos globales mientras el diálogo esté abierto
+        self.shortcuts_enabled = False
+
         dlg = tk.Toplevel(self.root)
         dlg.title("Cobro en Efectivo")
         dlg.geometry("360x200")
         dlg.configure(bg='#FAF2E3')
         dlg.transient(self.root)
         dlg.grab_set()
+
+        # Asegurar que al cerrar con la X se re-habiliten los atajos globales
+        def _on_close_efectivo():
+            self.shortcuts_enabled = True
+            try:
+                dlg.grab_release()
+            except:
+                pass
+            dlg.destroy()
+        dlg.protocol("WM_DELETE_WINDOW", _on_close_efectivo)
+        # Asegurar que el diálogo reciba el foco para capturar F1/F2
+        try:
+            dlg.focus_set()
+            dlg.focus_force()
+        except Exception:
+            pass
 
         tk.Label(dlg, text=f"Total a pagar: ${total:.2f}", font=('Arial', 12, 'bold'), bg='#FAF2E3').pack(pady=(12,6))
 
@@ -1712,10 +1751,15 @@ class KioscoPOS:
         entry_pago.bind('<KeyRelease>', actualizar_vuelto)
 
         def confirmar():
+            # Re-habilitar atajos antes de cerrar
+            self.shortcuts_enabled = True
             val = entry_pago.get().strip()
             # Campo vacío -> proceder igual (el cálculo de vuelto es opcional)
             if val == '':
-                dlg.grab_release()
+                try:
+                    dlg.grab_release()
+                except:
+                    pass
                 dlg.destroy()
                 self.finalizar_venta(metodo)
                 return
@@ -1741,7 +1785,14 @@ class KioscoPOS:
         frame_bot.pack(pady=8, fill='x', padx=10)
 
         tk.Button(frame_bot, text="Confirmar Cobro", bg='#16a34a', fg='white', font=('Arial', 10, 'bold'), command=confirmar).pack(side='left', expand=True, fill='x', padx=5)
-        tk.Button(frame_bot, text="Cancelar", bg='#ef4444', fg='white', font=('Arial', 10), command=lambda: (dlg.grab_release(), dlg.destroy())).pack(side='left', expand=True, fill='x', padx=5)
+        def _cancelar_efectivo():
+            self.shortcuts_enabled = True
+            try:
+                dlg.grab_release()
+            except:
+                pass
+            dlg.destroy()
+        tk.Button(frame_bot, text="Cancelar", bg='#ef4444', fg='white', font=('Arial', 10), command=_cancelar_efectivo).pack(side='left', expand=True, fill='x', padx=5)
 
         entry_pago.focus_set()
         # Inicializar vuelto
@@ -1750,12 +1801,15 @@ class KioscoPOS:
         try:
             # Bind F1 to confirmar and F2 to cancelar inside the dialog. Return 'break' to stop propagation to root bindings.
             dlg.bind('<F1>', lambda e: (confirmar(), 'break'))
-            dlg.bind('<F2>', lambda e: (dlg.grab_release(), dlg.destroy(), 'break'))
+            dlg.bind('<F2>', lambda e: (_cancelar_efectivo(), 'break'))
         except Exception:
             pass
 
     def mostrar_dialogo_confirmacion(self, total, metodo=''):
         """Muestra un diálogo modal de confirmación con la posibilidad de confirmar con F1."""
+        # Deshabilitar atajos globales mientras el diálogo esté abierto
+        self.shortcuts_enabled = False
+
         dlg = tk.Toplevel(self.root)
         dlg.title("Confirmar Cobro")
         dlg.geometry("360x150")
@@ -1763,11 +1817,31 @@ class KioscoPOS:
         dlg.transient(self.root)
         dlg.grab_set()
 
+        # Asegurar que al cerrar con la X se re-habiliten los atajos globales
+        def _on_close_confirm():
+            self.shortcuts_enabled = True
+            try:
+                dlg.grab_release()
+            except:
+                pass
+            dlg.destroy()
+        dlg.protocol("WM_DELETE_WINDOW", _on_close_confirm)
+        # Asegurar que el diálogo reciba el foco para capturar F1/F2
+        try:
+            dlg.focus_set()
+            dlg.focus_force()
+        except Exception:
+            pass
+
         tk.Label(dlg, text=f"Confirmar cobro por {metodo}", font=('Arial', 12, 'bold'), bg='#FAF2E3').pack(pady=(12,6))
         tk.Label(dlg, text=f"Total: ${total:.2f}", font=('Arial', 11), bg='#FAF2E3').pack(pady=(0,8))
 
         def confirmar():
-            dlg.grab_release()
+            self.shortcuts_enabled = True
+            try:
+                dlg.grab_release()
+            except:
+                pass
             dlg.destroy()
             self.finalizar_venta(metodo)
 
@@ -1775,12 +1849,19 @@ class KioscoPOS:
         frame_bot.pack(pady=8, fill='x', padx=10)
 
         tk.Button(frame_bot, text="F1  Confirmar", bg='#16a34a', fg='white', font=('Arial', 10, 'bold'), command=confirmar).pack(side='left', expand=True, fill='x', padx=5)
-        tk.Button(frame_bot, text="F2  Cancelar", bg='#ef4444', fg='white', font=('Arial', 10), command=lambda: (dlg.grab_release(), dlg.destroy())).pack(side='left', expand=True, fill='x', padx=5)
+        def _cancelar_confirm():
+            self.shortcuts_enabled = True
+            try:
+                dlg.grab_release()
+            except:
+                pass
+            dlg.destroy()
+        tk.Button(frame_bot, text="F2  Cancelar", bg='#ef4444', fg='white', font=('Arial', 10), command=_cancelar_confirm).pack(side='left', expand=True, fill='x', padx=5)
 
         # Bind F1 to confirmar and F2 to cancelar inside the dialog. Return 'break' to stop propagation to root bindings.
         try:
             dlg.bind('<F1>', lambda e: (confirmar(), 'break'))
-            dlg.bind('<F2>', lambda e: (dlg.grab_release(), dlg.destroy(), 'break'))
+            dlg.bind('<F2>', lambda e: (_cancelar_confirm(), 'break'))
         except Exception:
             pass
     def finalizar_venta(self, metodo_pago):
