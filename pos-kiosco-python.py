@@ -449,6 +449,48 @@ class KioscoPOS:
         
         # Limpiar códigos de barras con .0 al final
         self.limpiar_codigos_barras()
+
+        # Ejecutar migraciones de BD
+        self._migrar_bd()
+
+    def _migrar_bd(self):
+        """Ejecuta migraciones necesarias para actualizar el esquema de BD."""
+        try:
+            # Verificar y agregar columna precio_sugerido a productos
+            self.cursor.execute("PRAGMA table_info(productos)")
+            columnas = [col[1] for col in self.cursor.fetchall()]
+            
+            if 'precio_sugerido' not in columnas:
+                # Agregar columna con valor calculado por defecto (usando 30% de ganancia)
+                self.cursor.execute('''
+                    ALTER TABLE productos ADD COLUMN precio_sugerido REAL DEFAULT 0
+                ''')
+                # Calcular precio sugerido para productos existentes (ganancia = 30%)
+                self.cursor.execute('''
+                    UPDATE productos SET precio_sugerido = 
+                        CASE WHEN costo > 0 THEN costo / (1 - 0.30) ELSE 0 END
+                ''')
+                print("✅ Columna 'precio_sugerido' agregada a tabla 'productos'")
+            
+            if 'ganancia_deseada' not in columnas:
+                # Agregar columna para % de ganancia deseada por producto (NULL = usar global)
+                self.cursor.execute('''
+                    ALTER TABLE productos ADD COLUMN ganancia_deseada REAL DEFAULT NULL
+                ''')
+                print("✅ Columna 'ganancia_deseada' agregada a tabla 'productos'")
+            
+            # Asegurar que existe la configuración global de ganancia deseada
+            self.cursor.execute("SELECT valor FROM configuracion WHERE clave = 'ganancia_deseada_default'")
+            if not self.cursor.fetchone():
+                self.cursor.execute('''
+                    INSERT INTO configuracion (clave, valor) VALUES ('ganancia_deseada_default', '30')
+                ''')
+                print("✅ Configuración 'ganancia_deseada_default' establecida a 30%")
+            
+            self.conn.commit()
+        except Exception as e:
+            print(f"⚠️ Error en migración de BD: {e}")
+            self.conn.rollback()
     
     def get_configuracion(self, clave, default='1'):
         """Obtiene un valor de configuración"""
@@ -467,6 +509,35 @@ class KioscoPOS:
     def stock_habilitado(self):
         """Verifica si el stock está habilitado"""
         return self.get_configuracion('stock_habilitado') == '1'
+    
+    def calcular_precio_sugerido(self, costo, ganancia_deseada=None):
+        """Calcula el precio sugerido usando la fórmula: P = C / (1 - R)
+        Donde P = Precio, C = Costo, R = Ganancia deseada (en decimal, ej: 0.30 para 30%)
+        
+        Si ganancia_deseada es None, usa el valor global.
+        """
+        if ganancia_deseada is None:
+            # Obtener el % de ganancia deseada global
+            ganancia_str = self.get_configuracion('ganancia_deseada_default', '30')
+            try:
+                ganancia_deseada = float(ganancia_str) / 100.0  # Convertir de % a decimal
+            except ValueError:
+                ganancia_deseada = 0.30  # Default fallback
+        else:
+            # Si se pasa el % como número, convertir a decimal si es necesario
+            if ganancia_deseada > 1:
+                ganancia_deseada = ganancia_deseada / 100.0
+        
+        # Evitar división por cero
+        if ganancia_deseada >= 1.0:
+            return 0.0
+        
+        if costo <= 0:
+            return 0.0
+        
+        # Calcular precio sugerido y redondear a 1 decimal
+        precio_sugerido = costo / (1.0 - ganancia_deseada)
+        return round(precio_sugerido, 1)
     
     def mostrar_login(self):
         """Muestra la ventana de login"""
@@ -839,6 +910,40 @@ class KioscoPOS:
             fg='gray'
         ).pack(side='left', padx=10, pady=5)
         
+        # Separador visual
+        ttk.Separator(frame_config, orient='vertical').pack(side='left', fill='y', padx=10)
+        
+        # Configuración de ganancia deseada
+        tk.Label(
+            frame_config,
+            text="Ganancia Deseada (%):",
+            font=('Arial', 10),
+            bg='#E3F2FD'
+        ).pack(side='left', padx=5)
+        
+        ganancia_default = self.get_configuracion('ganancia_deseada_default', '30')
+        self.ganancia_deseada_var = tk.StringVar(value=ganancia_default)
+        
+        self.spinbox_ganancia_deseada = tk.Spinbox(
+            frame_config,
+            from_=1,
+            to=99,
+            textvariable=self.ganancia_deseada_var,
+            font=('Arial', 10),
+            width=5
+        )
+        self.spinbox_ganancia_deseada.pack(side='left', padx=5)
+        
+        tk.Button(
+            frame_config,
+            text="Guardar",
+            font=('Arial', 9),
+            bg='#16a34a',
+            fg='white',
+            command=self.guardar_ganancia_deseada_global,
+            cursor='hand2'
+        ).pack(side='left', padx=5)
+        
         # Frame contenedor para formulario y tabla
         frame_contenedor = tk.Frame(frame_productos, bg='#FAF2E3')
         frame_contenedor.pack(fill='both', expand=True, padx=10, pady=5)
@@ -888,6 +993,10 @@ class KioscoPOS:
         tk.Label(frame_form, text="Código de Barras:", bg='#FAF2E3').pack(pady=2)
         self.prod_barcode = tk.Entry(frame_form, font=('Arial', 11), width=30)
         self.prod_barcode.pack(pady=2)
+        
+        tk.Label(frame_form, text="Ganancia Deseada (%) [vacío=global]:", bg='#FAF2E3').pack(pady=2)
+        self.prod_ganancia_deseada = tk.Entry(frame_form, font=('Arial', 11), width=30)
+        self.prod_ganancia_deseada.pack(pady=2)
         
         # Botones
         frame_botones_prod = tk.Frame(frame_form, bg='#FAF2E3')
@@ -943,9 +1052,9 @@ class KioscoPOS:
         
         # Columnas condicionadas por configuración de stock
         if self.stock_habilitado():
-            columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Stock', 'Categoría', 'Código')
+            columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Stock', 'Sugerido', 'Categoría', 'Código')
         else:
-            columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Categoría', 'Código')
+            columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Sugerido', 'Categoría', 'Código')
         
         self.tabla_productos = ttk.Treeview(
             frame_tabla,
@@ -960,6 +1069,7 @@ class KioscoPOS:
         self.tabla_productos.heading('Costo', text='Costo', command=lambda: self.ordenar_tabla_productos('Costo'))
         if self.stock_habilitado():
             self.tabla_productos.heading('Stock', text='Stock', command=lambda: self.ordenar_tabla_productos('Stock'))
+        self.tabla_productos.heading('Sugerido', text='Sugerido', command=lambda: self.ordenar_tabla_productos('Sugerido'))
         self.tabla_productos.heading('Categoría', text='Categoría', command=lambda: self.ordenar_tabla_productos('Categoría'))
         self.tabla_productos.heading('Código', text='Código Barras', command=lambda: self.ordenar_tabla_productos('Código'))
             
@@ -969,6 +1079,7 @@ class KioscoPOS:
         self.tabla_productos.column('Costo', width=80)
         if self.stock_habilitado():
             self.tabla_productos.column('Stock', width=60)
+        self.tabla_productos.column('Sugerido', width=80)
         self.tabla_productos.column('Categoría', width=100)
         self.tabla_productos.column('Código', width=120)
         
@@ -1120,9 +1231,9 @@ class KioscoPOS:
             
             # Recrear tabla con columnas correctas
             if self.stock_habilitado():
-                columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Stock', 'Categoría', 'Código')
+                columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Stock', 'Sugerido', 'Categoría', 'Código')
             else:
-                columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Categoría', 'Código')
+                columnas = ('ID', 'Nombre', 'Precio', 'Costo', 'Sugerido', 'Categoría', 'Código')
             
             self.tabla_productos = ttk.Treeview(
                 frame_padre,
@@ -1138,6 +1249,7 @@ class KioscoPOS:
             self.tabla_productos.heading('Costo', text='Costo', command=lambda: self.ordenar_tabla_productos('Costo'))
             if self.stock_habilitado():
                 self.tabla_productos.heading('Stock', text='Stock', command=lambda: self.ordenar_tabla_productos('Stock'))
+            self.tabla_productos.heading('Sugerido', text='Sugerido', command=lambda: self.ordenar_tabla_productos('Sugerido'))
             self.tabla_productos.heading('Categoría', text='Categoría', command=lambda: self.ordenar_tabla_productos('Categoría'))
             self.tabla_productos.heading('Código', text='Código Barras', command=lambda: self.ordenar_tabla_productos('Código'))
                 
@@ -1148,6 +1260,7 @@ class KioscoPOS:
             self.tabla_productos.column('Costo', width=80)
             if self.stock_habilitado():
                 self.tabla_productos.column('Stock', width=60)
+            self.tabla_productos.column('Sugerido', width=80)
             self.tabla_productos.column('Categoría', width=100)
             self.tabla_productos.column('Código', width=120)
             
@@ -1170,6 +1283,39 @@ class KioscoPOS:
         else:
             self.stock_label.pack_forget()
             self.prod_stock.pack_forget()
+    
+    def guardar_ganancia_deseada_global(self):
+        """Guarda la configuración global de ganancia deseada"""
+        try:
+            ganancia_str = self.spinbox_ganancia_deseada.get().strip()
+            ganancia = float(ganancia_str) if ganancia_str else 30.0
+            
+            # Validar que sea un porcentaje válido
+            if ganancia < 0 or ganancia >= 100:
+                messagebox.showerror("Error", "La ganancia deseada debe ser un valor entre 0 y 99")
+                self.spinbox_ganancia_deseada.delete(0, tk.END)
+                self.spinbox_ganancia_deseada.insert(0, '30')
+                return
+            
+            # Guardar en configuración
+            self.set_configuracion('ganancia_deseada_default', str(ganancia))
+            messagebox.showinfo("Éxito", f"Ganancia deseada global establecida a {ganancia}%")
+            
+            # Recalcular precios sugeridos para todos los productos sin override
+            self.cursor.execute('''
+                UPDATE productos 
+                SET precio_sugerido = CASE 
+                    WHEN costo > 0 THEN costo / (1 - ? / 100.0) 
+                    ELSE 0 
+                END
+                WHERE ganancia_deseada IS NULL
+            ''', (ganancia,))
+            self.conn.commit()
+            
+            # Actualizar tabla para mostrar los nuevos precios sugeridos
+            self.actualizar_tabla_productos()
+        except ValueError:
+            messagebox.showerror("Error", "La ganancia deseada debe ser un número válido")
     
     def crear_pestaña_reportes(self):
         """Crea la pestaña de reportes"""
@@ -2014,6 +2160,17 @@ class KioscoPOS:
             messagebox.showerror("Error", "Precio y costo deben ser números válidos (o estar vacíos)")
             return
         
+        # Obtener ganancia_deseada si está disponible
+        ganancia_deseada = None
+        if hasattr(self, 'prod_ganancia_deseada'):
+            ganancia_str = self.prod_ganancia_deseada.get().strip()
+            if ganancia_str:
+                try:
+                    ganancia_deseada = float(ganancia_str)
+                except ValueError:
+                    messagebox.showerror("Error", "La ganancia deseada debe ser un número válido o estar vacía")
+                    return
+        
         # Advertir si precio o costo están en cero
         if precio == 0 or costo == 0:
             advertencia = []
@@ -2029,20 +2186,23 @@ class KioscoPOS:
             if not messagebox.askyesno("Campos Incompletos", mensaje_adv, icon='warning'):
                 return
         
+        # Calcular precio sugerido con la ganancia deseada (o global si no está definida)
+        precio_sugerido = self.calcular_precio_sugerido(costo, ganancia_deseada)
+        
         if self.producto_id:
             # Actualizar
             self.cursor.execute('''
                 UPDATE productos 
-                SET nombre=?, precio=?, costo=?, stock=?, categoria=?, codigo_barras=?
+                SET nombre=?, precio=?, costo=?, stock=?, categoria=?, codigo_barras=?, precio_sugerido=?, ganancia_deseada=?
                 WHERE id=?
-            ''', (nombre, precio, costo, stock, categoria or 'Otros', codigo_barras, self.producto_id))
+            ''', (nombre, precio, costo, stock, categoria or 'Otros', codigo_barras, precio_sugerido, ganancia_deseada, self.producto_id))
             messagebox.showinfo("Éxito", "Producto actualizado correctamente")
         else:
             # Insertar
             self.cursor.execute('''
-                INSERT INTO productos (nombre, precio, costo, stock, categoria, codigo_barras)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (nombre, precio, costo, stock, categoria or 'Otros', codigo_barras))
+                INSERT INTO productos (nombre, precio, costo, stock, categoria, codigo_barras, precio_sugerido, ganancia_deseada)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (nombre, precio, costo, stock, categoria or 'Otros', codigo_barras, precio_sugerido, ganancia_deseada))
             # Reorganizar IDs después de agregar nuevo producto (sin commit automático)
             self.reorganizar_ids_productos(auto_commit=False)
             self.conn.commit()
@@ -2065,6 +2225,8 @@ class KioscoPOS:
         self.prod_stock.delete(0, tk.END)
         self.prod_categoria.set('')
         self.prod_barcode.delete(0, tk.END)
+        if hasattr(self, 'prod_ganancia_deseada'):
+            self.prod_ganancia_deseada.delete(0, tk.END)
     
     def actualizar_tabla_productos(self):
         """Actualiza la tabla de productos"""
@@ -2092,6 +2254,20 @@ class KioscoPOS:
             producto_lista = list(producto)
             if producto_lista[6] and str(producto_lista[6]).endswith('.0'):
                 producto_lista[6] = str(producto_lista[6])[:-2]
+            
+            # Recalcular precio_sugerido si es 0 o inválido
+            # Estructura: id(0), nombre(1), precio(2), costo(3), stock(4), categoria(5), codigo_barras(6), precio_sugerido(7), ganancia_deseada(8)
+            costo = producto_lista[3]
+            ganancia_deseada = producto_lista[8] if len(producto_lista) > 8 else None
+            precio_sugerido = self.calcular_precio_sugerido(costo, ganancia_deseada)
+            if precio_sugerido != producto_lista[7]:
+                # Actualizar en la base de datos
+                self.cursor.execute('''
+                    UPDATE productos SET precio_sugerido = ? WHERE id = ?
+                ''', (precio_sugerido, producto_lista[0]))
+                self.conn.commit()
+            producto_lista[7] = precio_sugerido
+            
             producto = tuple(producto_lista)
             # Determinar tags según el estado del producto
             tags = []
@@ -2099,21 +2275,25 @@ class KioscoPOS:
             # Tag por precio/costo incompleto (prioridad alta)
             if producto[2] == 0 or producto[3] == 0:  # precio == 0 o costo == 0
                 tags.append('incompleto')
-            # Tag por stock bajo (solo si stock habilitado y no está incompleto)
+            # Tag por precio menor al sugerido (segunda prioridad)
+            elif producto[2] > 0 and producto[7] > 0 and producto[2] < producto[7]:
+                tags.append('precio_bajo')
+            # Tag por stock bajo (solo si stock habilitado y no está incompleto ni precio bajo)
             elif self.stock_habilitado() and producto[4] <= 5:
                 tags.append('bajo_stock')
             
             if self.stock_habilitado():
-                # Mostrar todas las columnas incluyendo stock
-                valores = producto
+                # Mostrar: ID(0), Nombre(1), Precio(2), Costo(3), Stock(4), Sugerido(7), Categoría(5), Código(6)
+                valores = (producto[0], producto[1], producto[2], producto[3], producto[4], producto[7], producto[5], producto[6])
             else:
-                # Omitir la columna stock (índice 4)
-                valores = (producto[0], producto[1], producto[2], producto[3], producto[5], producto[6])
+                # Omitir stock: ID(0), Nombre(1), Precio(2), Costo(3), Sugerido(7), Categoría(5), Código(6)
+                valores = (producto[0], producto[1], producto[2], producto[3], producto[7], producto[5], producto[6])
             
             self.tabla_productos.insert('', 'end', values=valores, tags=tuple(tags))
         
         # Configurar colores para los tags
         self.tabla_productos.tag_configure('incompleto', background='#fef3c7', foreground='#92400e')  # Amarillo
+        self.tabla_productos.tag_configure('precio_bajo', background='#fee2e2', foreground='#dc2626')  # Rojo claro
         if self.stock_habilitado():
             self.tabla_productos.tag_configure('bajo_stock', background='#fee2e2', foreground='#dc2626')  # Rojo claro
     
@@ -2127,38 +2307,37 @@ class KioscoPOS:
         item = self.tabla_productos.item(seleccion[0])
         valores = item['values']
         
-        # Manejar índices según si stock está habilitado o no
-        if self.stock_habilitado():
-            # Índices normales: ID(0), Nombre(1), Precio(2), Costo(3), Stock(4), Categoría(5), Código(6)
-            self.producto_id = valores[0]
-            self.prod_nombre.delete(0, tk.END)
-            self.prod_nombre.insert(0, valores[1])
-            self.prod_precio.delete(0, tk.END)
-            self.prod_precio.insert(0, valores[2])
-            self.prod_costo.delete(0, tk.END)
-            self.prod_costo.insert(0, valores[3])
-            self.prod_stock.delete(0, tk.END)
-            self.prod_stock.insert(0, valores[4])
-            self.prod_categoria.set(valores[5])
-            self.prod_barcode.delete(0, tk.END)
-            self.prod_barcode.insert(0, valores[6] if valores[6] else '')
-        else:
-            # Índices sin stock: ID(0), Nombre(1), Precio(2), Costo(3), Categoría(4), Código(5)
-            # Necesitamos obtener el producto completo de la BD para tener el stock
-            producto_id = valores[0]
-            self.cursor.execute('SELECT * FROM productos WHERE id = ?', (producto_id,))
-            producto_completo = self.cursor.fetchone()
-            
-            self.producto_id = producto_completo[0]
-            self.prod_nombre.delete(0, tk.END)
-            self.prod_nombre.insert(0, producto_completo[1])
-            self.prod_precio.delete(0, tk.END)
-            self.prod_precio.insert(0, producto_completo[2])
-            self.prod_costo.delete(0, tk.END)
-            self.prod_costo.insert(0, producto_completo[3])
-            self.prod_categoria.set(producto_completo[5])
-            self.prod_barcode.delete(0, tk.END)
-            self.prod_barcode.insert(0, producto_completo[6] if producto_completo[6] else '')
+        # Siempre obtener el producto completo de la BD para acceder a ganancia_deseada
+        # Estructura en Treeview con stock: ID(0), Nombre(1), Precio(2), Costo(3), Stock(4), Sugerido(5), Categoría(6), Código(7)
+        # Estructura en Treeview sin stock: ID(0), Nombre(1), Precio(2), Costo(3), Sugerido(4), Categoría(5), Código(6)
+        producto_id = valores[0]
+        self.cursor.execute('SELECT * FROM productos WHERE id = ?', (producto_id,))
+        producto_completo = self.cursor.fetchone()
+        
+        if not producto_completo:
+            messagebox.showerror("Error", "No se pudo encontrar el producto seleccionado")
+            return
+        
+        # Estructura de BD: id(0), nombre(1), precio(2), costo(3), stock(4), categoria(5), codigo_barras(6), precio_sugerido(7), ganancia_deseada(8)
+        self.producto_id = producto_completo[0]
+        self.prod_nombre.delete(0, tk.END)
+        self.prod_nombre.insert(0, producto_completo[1])
+        self.prod_precio.delete(0, tk.END)
+        self.prod_precio.insert(0, producto_completo[2])
+        self.prod_costo.delete(0, tk.END)
+        self.prod_costo.insert(0, producto_completo[3])
+        self.prod_stock.delete(0, tk.END)
+        self.prod_stock.insert(0, producto_completo[4])
+        self.prod_categoria.set(producto_completo[5])
+        self.prod_barcode.delete(0, tk.END)
+        self.prod_barcode.insert(0, producto_completo[6] if producto_completo[6] else '')
+        
+        # Cargar ganancia_deseada si existe (puede ser None)
+        if hasattr(self, 'prod_ganancia_deseada'):
+            self.prod_ganancia_deseada.delete(0, tk.END)
+            if len(producto_completo) > 8 and producto_completo[8] is not None:
+                self.prod_ganancia_deseada.insert(0, str(producto_completo[8]))
+    
     
     def eliminar_producto(self):
         """Elimina el producto seleccionado"""
