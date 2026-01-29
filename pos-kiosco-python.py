@@ -415,6 +415,35 @@ class KioscoPOS:
                 valor TEXT NOT NULL
             )
         ''')
+
+        # Tabla de cajas (sesiones de caja)
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cajas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario TEXT NOT NULL,
+                rol TEXT NOT NULL,
+                fecha_apertura TEXT NOT NULL,
+                fecha_cierre TEXT,
+                fondo_inicial TEXT,
+                total_ventas_por_metodo TEXT,
+                faltante_sobrante REAL,
+                estado TEXT NOT NULL,
+                turno TEXT
+            )
+        ''')
+        
+        # Tabla de movimientos de caja (ingresos y egresos)
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS movimientos_caja (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                caja_id INTEGER NOT NULL,
+                tipo TEXT NOT NULL,
+                monto REAL NOT NULL,
+                descripcion TEXT,
+                fecha TEXT NOT NULL,
+                FOREIGN KEY (caja_id) REFERENCES cajas (id)
+            )
+        ''')
         
         # Insertar usuario admin por defecto si no existe
         self.cursor.execute("SELECT * FROM usuarios WHERE nombre = 'Administrador'")
@@ -538,6 +567,23 @@ class KioscoPOS:
         # Calcular precio sugerido y redondear a 1 decimal
         precio_sugerido = costo / (1.0 - ganancia_deseada)
         return round(precio_sugerido, 1)
+    
+    def centrar_ventana(self, ventana, ancho=400, alto=300, padre=None):
+        """Centra una ventana emergente en la pantalla o relativa al padre."""
+        ventana.update_idletasks()
+        if padre:
+            # Centrar relativo a la ventana padre
+            padre_x = padre.winfo_x()
+            padre_y = padre.winfo_y()
+            padre_ancho = padre.winfo_width()
+            padre_alto = padre.winfo_height()
+            x = padre_x + (padre_ancho // 2) - (ancho // 2)
+            y = padre_y + (padre_alto // 2) - (alto // 2)
+        else:
+            # Centrar en la pantalla
+            x = (ventana.winfo_screenwidth() // 2) - (ancho // 2)
+            y = (ventana.winfo_screenheight() // 2) - (alto // 2)
+        ventana.geometry(f"{ancho}x{alto}+{x}+{y}")
     
     def mostrar_login(self):
         """Muestra la ventana de login"""
@@ -663,9 +709,35 @@ class KioscoPOS:
             command=self.logout,
             cursor='hand2'
         ).pack(side='right', padx=10)
+        # Botón para manejar caja (Abrir / Cerrar)
+        self.btn_caja = tk.Button(
+            header,
+            text="Abrir Caja",
+            font=('Arial', 10),
+            bg="#f59e0b",
+            fg='white',
+            command=lambda: (self.cerrar_caja_dialog() if self.is_caja_abierta() else self.abrir_caja_dialog()),
+            cursor='hand2'
+        )
+        self.btn_caja.pack(side='right', padx=10)
+        
+        # Botón para registrar movimientos de caja (solo visible si caja está abierta)
+        self.btn_movimientos = tk.Button(
+            header,
+            text="Movimientos",
+            font=('Arial', 10),
+            bg="#0ea5e9",
+            fg='white',
+            command=self.registrar_movimiento_caja,
+            cursor='hand2'
+        )
+        if self.is_caja_abierta():
+            self.btn_movimientos.pack(side='right', padx=10)
         
         # Notebook (pestañas)
         self.notebook = ttk.Notebook(self.root)
+        # Actualizar estado del botón de caja según exista caja abierta
+        self.actualizar_estado_caja_button()
         self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
         self.notebook.style = ttk.Style()
         self.notebook.style.configure('TNotebook', background='#FAF2E3')
@@ -1826,6 +1898,14 @@ class KioscoPOS:
         messagebox.showinfo("Stock actualizado", "El stock fue actualizado correctamente (sin registrar venta).")
     def cobrar_metodo(self, metodo):
         """Wrapper para procesar cobros: confirma para no-efectivo, ventana especial para efectivo."""
+        # Verificar que la caja esté abierta para empleados
+        try:
+            rol = self.usuario_actual.get('rol') if self.usuario_actual else None
+        except Exception:
+            rol = None
+        if rol == 'empleado' and not self.is_caja_abierta():
+            messagebox.showerror("Caja Cerrada", "No se puede realizar ventas sin una caja abierta. Por favor abra la caja.")
+            return
         # Calcular total actual del carrito
         if not self.carrito:
             messagebox.showwarning("Carrito Vacío", "El carrito está vacío")
@@ -1917,11 +1997,6 @@ class KioscoPOS:
                 messagebox.showerror("Error", "Ingrese un monto válido para el pago")
                 return
 
-            # Si el pago es menor al total, preguntar si registrar igual
-            #if pago < total:
-            #    if not messagebox.askyesno("Pago insuficiente", "El pago ingresado es menor al total. ¿Desea registrar la venta igual?", icon='warning'):
-            #        return
-
             dlg.grab_release()
             dlg.destroy()
             # Proceder con la venta
@@ -2010,6 +2085,7 @@ class KioscoPOS:
             dlg.bind('<F2>', lambda e: (_cancelar_confirm(), 'break'))
         except Exception:
             pass
+
     def finalizar_venta(self, metodo_pago):
         """Finaliza la venta y la registra"""
         if not self.carrito:
@@ -2122,6 +2198,477 @@ class KioscoPOS:
             
         except Exception as e:
             messagebox.showerror("Error", f"Error al generar ticket: {str(e)}")
+
+    # ===== Métodos de Caja (Abrir/Cerrar) =====
+    def get_caja_abierta(self):
+        """Retorna la fila de la caja actualmente abierta o None."""
+        try:
+            self.cursor.execute("SELECT * FROM cajas WHERE estado = 'abierta' ORDER BY id DESC LIMIT 1")
+            row = self.cursor.fetchone()
+            return row
+        except Exception:
+            return None
+
+    def is_caja_abierta(self):
+        return True if self.get_caja_abierta() else False
+
+    def abrir_caja_obligatorio(self, obligatorio=True):
+        """Abre la ventana de apertura de caja de forma obligatoria (empleado) o opcional (admin)."""
+        if self.is_caja_abierta():
+            messagebox.showinfo("Caja", "Ya existe una caja abierta.")
+            return
+        
+        self.abrir_caja_dialog(obligatorio=obligatorio)
+
+    def abrir_caja_dialog(self, obligatorio=False):
+        """Diálogo para abrir caja con fondo inicial por método."""
+        # Solo empleados pueden abrir caja (admin puede operar sin abrir)
+        if not self.usuario_actual:
+            messagebox.showerror("Error", "Usuario no identificado")
+            return
+        if self.usuario_actual.get('rol') != 'empleado' and not obligatorio:
+            messagebox.showinfo("Info", "El administrador no necesita abrir caja")
+            return
+
+        if self.is_caja_abierta():
+            messagebox.showinfo("Caja", "Ya existe una caja abierta.")
+            return
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Abrir Caja")
+        dlg.configure(bg='#FAF2E3')
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        
+        # Centrar la ventana
+        self.centrar_ventana(dlg, 460, 420, self.root)
+        
+        try:
+            dlg.iconbitmap(self.get_resource_path("img", "kiosco.ico"))
+        except:
+            pass
+        
+        # Deshabilitar X si es obligatorio
+        if obligatorio:
+            dlg.protocol("WM_DELETE_WINDOW", lambda: None)
+        else:
+            dlg.protocol("WM_DELETE_WINDOW", lambda: (dlg.grab_release(), dlg.destroy()))
+
+        # Header
+        header_frame = tk.Frame(dlg, bg='#D94A2B', height=50)
+        header_frame.pack(fill='x')
+        title_text = "Apertura de Caja - Fondo Inicial" if obligatorio else "Abrir Caja"
+        tk.Label(header_frame, text=title_text, font=('Arial', 14, 'bold'), bg='#D94A2B', fg='white').pack(pady=10)
+        
+        # Content frame
+        content_frame = tk.Frame(dlg, bg='#FAF2E3')
+        content_frame.pack(fill='both', expand=True, padx=16, pady=16)
+
+        tk.Label(content_frame, text="Ingresa el fondo inicial por método de pago:", font=('Arial', 11, 'bold'), bg='#FAF2E3', fg='#333').pack(pady=(0, 12))
+
+        methods = ['Efectivo', 'Transferencia', 'Débito', 'Crédito']
+        entries = {}
+        
+        # Frame para los campos de entrada
+        fields_frame = tk.Frame(content_frame, bg='#FAF2E3')
+        fields_frame.pack(fill='x', pady=8)
+        
+        for m in methods:
+            row_frame = tk.Frame(fields_frame, bg='#FAF2E3')
+            row_frame.pack(fill='x', pady=6)
+            tk.Label(row_frame, text=f"{m}:", font=('Arial', 10), bg='#FAF2E3', fg='#333', width=15, anchor='w').pack(side='left')
+            e = tk.Entry(row_frame, font=('Arial', 10), width=20)
+            e.pack(side='left', fill='x', expand=True, padx=(8, 0))
+            e.insert(0, '0')
+            entries[m] = e
+
+        def confirmar():
+            try:
+                fondo = {m: float(entries[m].get() or 0) for m in entries}
+            except Exception:
+                messagebox.showerror("Error", "Fondos iniciales inválidos. Ingresa números válidos.")
+                return
+
+            fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            usuario = self.usuario_actual['nombre']
+            rol = self.usuario_actual['rol']
+            turno = getattr(self, 'turno_actual', None)
+
+            self.cursor.execute('''
+                INSERT INTO cajas (usuario, rol, fecha_apertura, fondo_inicial, estado, turno)
+                VALUES (?, ?, ?, ?, 'abierta', ?)
+            ''', (usuario, rol, fecha, json.dumps(fondo, ensure_ascii=False), turno))
+            self.conn.commit()
+            try:
+                dlg.grab_release()
+            except:
+                pass
+            dlg.destroy()
+            messagebox.showinfo("Caja", "Caja abierta correctamente. ¡Bienvenido!")
+            self.actualizar_estado_caja_button()
+
+        # Frame de botones
+        btn_frame = tk.Frame(content_frame, bg='#FAF2E3')
+        btn_frame.pack(fill='x', pady=(16, 0))
+        
+        tk.Button(btn_frame, text="Abrir Caja", font=('Arial', 11, 'bold'), bg='#16a34a', fg='white', command=confirmar, cursor='hand2', padx=20, pady=8).pack(side='left', expand=True, padx=(0, 6))
+        
+        if not obligatorio:
+            tk.Button(btn_frame, text="Cancelar", font=('Arial', 11), bg='#ef4444', fg='white', command=lambda: (dlg.grab_release(), dlg.destroy()), cursor='hand2', padx=20, pady=8).pack(side='left', expand=True, padx=(6, 0))
+
+    def cerrar_caja_dialog(self):
+        """Cierra la caja abierta mostrando resumen por método y permitiendo exportar reporte."""
+        caja = self.get_caja_abierta()
+        if not caja:
+            messagebox.showinfo("Caja", "No hay caja abierta actualmente")
+            return
+
+        caja_id = caja[0]
+        fecha_ap = datetime.fromisoformat(caja[3]) if isinstance(caja[3], str) else datetime.strptime(caja[3], '%Y-%m-%d %H:%M:%S')
+        ahora = datetime.now()
+
+        # Calcular totales por metodo desde fecha_apertura hasta ahora
+        self.cursor.execute('''
+            SELECT metodo_pago, SUM(total) FROM ventas
+            WHERE fecha >= ? AND fecha <= ?
+            GROUP BY metodo_pago
+        ''', (fecha_ap.strftime('%Y-%m-%d %H:%M:%S'), ahora.strftime('%Y-%m-%d %H:%M:%S')))
+        rows = self.cursor.fetchall()
+        totals = {r[0]: (r[1] or 0.0) for r in rows}
+
+        # Obtener movimientos de caja
+        self.cursor.execute('''
+            SELECT tipo, SUM(monto) FROM movimientos_caja
+            WHERE caja_id = ?
+            GROUP BY tipo
+        ''', (caja_id,))
+        movs = self.cursor.fetchall()
+        mov_ingresos = next((m[1] for m in movs if m[0] == 'Ingreso'), 0.0)
+        mov_egresos = next((m[1] for m in movs if m[0] == 'Egreso'), 0.0)
+
+        fondo_inicial = json.loads(caja[5]) if caja[5] else {}
+        total_efectivo = totals.get('Efectivo', 0.0)
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Cerrar Caja - Resumen")
+        dlg.configure(bg='#FAF2E3')
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        
+        # Calcular altura dinámicamente según si hay movimientos
+        altura_base = 520
+        altura_extra = 100 if (mov_ingresos > 0 or mov_egresos > 0) else 0
+        altura_ventana = altura_base + altura_extra
+        
+        # Centrar la ventana
+        self.centrar_ventana(dlg, 500, altura_ventana, self.root)
+        
+        try:
+            dlg.iconbitmap(self.get_resource_path("img", "kiosco.ico"))
+        except:
+            pass
+        
+        # Header
+        header_frame = tk.Frame(dlg, bg='#D94A2B', height=50)
+        header_frame.pack(fill='x')
+        tk.Label(header_frame, text="Cierre de Caja", font=('Arial', 14, 'bold'), bg='#D94A2B', fg='white').pack(pady=10)
+
+        # Content frame con scroll
+        content_frame = tk.Frame(dlg, bg='#FAF2E3')
+        content_frame.pack(fill='both', expand=True, padx=14, pady=14)
+        
+        # Info del operador
+        info_frame = tk.Frame(content_frame, bg='#E3F2FD', relief='solid', bd=1)
+        info_frame.pack(fill='x', pady=6)
+        tk.Label(info_frame, text=f"Operador: {caja[1]} ({caja[2]}) | Apertura: {caja[3]}", font=('Arial', 10), bg='#E3F2FD', fg='#333').pack(anchor='w', padx=8, pady=6)
+
+        tk.Label(content_frame, text="Totales por método de pago:", font=('Arial', 11, 'bold'), bg='#FAF2E3', fg='#333').pack(anchor='w', pady=(12, 6))
+        
+        frame_tot = tk.Frame(content_frame, bg='#FAF2E3')
+        frame_tot.pack(fill='x', padx=10)
+
+        for metodo, monto in totals.items():
+            tk.Label(frame_tot, text=f"{metodo}: ${monto:,.2f}", font=('Arial', 10), bg='#FAF2E3', fg='#333').pack(anchor='w', pady=3)
+
+        # Movimientos de caja
+        if mov_ingresos > 0 or mov_egresos > 0:
+            # Separador
+            ttk.Separator(content_frame, orient='horizontal').pack(fill='x', pady=10)
+            tk.Label(content_frame, text="Movimientos de caja:", font=('Arial', 11, 'bold'), bg='#FAF2E3', fg='#333').pack(anchor='w', pady=(6, 6))
+            frame_mov = tk.Frame(content_frame, bg='#FAF2E3')
+            frame_mov.pack(fill='x', padx=10)
+            if mov_ingresos > 0:
+                tk.Label(frame_mov, text=f"Ingresos: +${mov_ingresos:,.2f}", font=('Arial', 10), bg='#FAF2E3', fg='#16a34a').pack(anchor='w', pady=2)
+            if mov_egresos > 0:
+                tk.Label(frame_mov, text=f"Egresos: -${mov_egresos:,.2f}", font=('Arial', 10), bg='#FAF2E3', fg='#dc2626').pack(anchor='w', pady=2)
+
+        # Separador
+        ttk.Separator(content_frame, orient='horizontal').pack(fill='x', pady=10)
+        
+        fondo_efectivo = fondo_inicial.get('Efectivo', 0)
+        tk.Label(content_frame, text=f"Fondo inicial (Efectivo): ${fondo_efectivo:,.2f}", font=('Arial', 10, 'bold'), bg='#FAF2E3', fg='#333').pack(anchor='w', pady=(8,0))
+        tk.Label(content_frame, text="Monto contado en caja:", font=('Arial', 10, 'bold'), bg='#FAF2E3', fg='#333').pack(anchor='w', pady=(12, 6))
+        entry_contado = tk.Entry(content_frame, font=('Arial', 11), width=20)
+        entry_contado.pack(anchor='w', pady=4)
+        entry_contado.insert(0, f"{(fondo_efectivo + total_efectivo + mov_ingresos - mov_egresos):.2f}")
+
+        label_diff = tk.Label(content_frame, text="Faltante/Sobrante: -", font=('Arial', 11, 'bold'), bg='#FAF2E3', fg='#16a34a')
+        label_diff.pack(pady=(12, 6))
+
+        def actualizar_diff(event=None):
+            try:
+                contado = float(entry_contado.get())
+            except Exception:
+                label_diff.config(text="Faltante/Sobrante: -", fg='#666')
+                return
+            esperado = fondo_efectivo + total_efectivo + mov_ingresos - mov_egresos
+            diff = contado - esperado
+            color = '#16a34a' if diff >= 0 else '#dc2626'  # Verde si sobrante, rojo si faltante
+            label_diff.config(text=f"Faltante/Sobrante: ${diff:+,.2f}", fg=color)
+
+        entry_contado.bind('<KeyRelease>', actualizar_diff)
+        actualizar_diff()
+
+        def confirmar_cierre():
+            try:
+                contado = float(entry_contado.get())
+            except Exception:
+                messagebox.showerror("Error", "Monto contado inválido")
+                return
+            esperado = fondo_efectivo + total_efectivo + mov_ingresos - mov_egresos
+            diff = contado - esperado
+
+            # Guardar totales y cerrar caja
+            fecha_cierre = ahora.strftime('%Y-%m-%d %H:%M:%S')
+            self.cursor.execute('''
+                UPDATE cajas SET fecha_cierre = ?, total_ventas_por_metodo = ?, faltante_sobrante = ?, estado = 'cerrada'
+                WHERE id = ?
+            ''', (fecha_cierre, json.dumps(totals, ensure_ascii=False), diff, caja_id))
+            self.conn.commit()
+
+            # Exportar resumen a Excel
+            try:
+                self.exportar_caja_excel(caja_id)
+            except Exception:
+                pass
+
+            try:
+                dlg.grab_release()
+            except:
+                pass
+            dlg.destroy()
+            messagebox.showinfo("Caja", f"Caja cerrada correctamente.\\nFaltante/Sobrante: ${diff:+,.2f}")
+            self.actualizar_estado_caja_button()
+
+        # Frame de botones
+        frame_bot = tk.Frame(content_frame, bg='#FAF2E3')
+        frame_bot.pack(fill='x', pady=(16, 0))
+        if mov_ingresos > 0 or mov_egresos > 0:
+            tk.Button(frame_bot, text="Ver Movimientos", font=('Arial', 10), bg='#0ea5e9', fg='white', command=lambda: self.ver_movimientos_caja(caja_id), cursor='hand2', padx=15, pady=8).pack(side='left', padx=(0, 6))
+        tk.Button(frame_bot, text="Cerrar Caja", font=('Arial', 11, 'bold'), bg='#16a34a', fg='white', command=confirmar_cierre, cursor='hand2', padx=20, pady=8).pack(side='left', expand=True, fill='x', padx=(0, 6))
+        tk.Button(frame_bot, text="Cancelar", font=('Arial', 11), bg='#ef4444', fg='white', command=lambda: (dlg.grab_release(), dlg.destroy()), cursor='hand2', padx=20, pady=8).pack(side='left', expand=True, fill='x', padx=(6, 0))
+
+    def exportar_caja_excel(self, caja_id):
+        """Exporta un resumen de la caja a un archivo Excel (hoja ResumenCaja)."""
+        self.cursor.execute('SELECT * FROM cajas WHERE id = ?', (caja_id,))
+        caja = self.cursor.fetchone()
+        if not caja:
+            return
+
+        # Preparar datos
+        fondo = json.loads(caja[5]) if caja[5] else {}
+        totals = json.loads(caja[6]) if caja[6] else {}
+        rows = []
+        for metodo, monto in totals.items():
+            rows.append({'Método': metodo, 'Total': monto, 'Fondo Inicial': fondo.get(metodo, 0)})
+
+        df = pd.DataFrame(rows)
+        reports_dir = 'reports'
+        if not os.path.exists(reports_dir):
+            os.makedirs(reports_dir)
+        filename = os.path.join(reports_dir, f'caja_{caja_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx')
+        with pd.ExcelWriter(filename) as writer:
+            df.to_excel(writer, sheet_name='ResumenCaja', index=False)
+
+    def actualizar_estado_caja_button(self):
+        """Actualiza el texto del botón de caja en el header si existe."""
+        if hasattr(self, 'btn_caja'):
+            if self.is_caja_abierta():
+                self.btn_caja.config(text='Cerrar Caja')
+            else:
+                self.btn_caja.config(text='Abrir Caja')
+        
+        # Actualizar visibilidad del botón de movimientos
+        if hasattr(self, 'btn_movimientos'):
+            if self.is_caja_abierta():
+                self.btn_movimientos.pack(side='right', padx=10)
+            else:
+                self.btn_movimientos.pack_forget()
+    
+    def ver_movimientos_caja(self, caja_id):
+        """Muestra el listado detallado de todos los movimientos de caja."""
+        self.cursor.execute('''
+            SELECT tipo, monto, descripcion, fecha FROM movimientos_caja
+            WHERE caja_id = ?
+            ORDER BY fecha DESC
+        ''', (caja_id,))
+        movimientos = self.cursor.fetchall()
+        
+        if not movimientos:
+            messagebox.showinfo("Movimientos", "No hay movimientos registrados")
+            return
+        
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Movimientos de Caja")
+        dlg.configure(bg='#FAF2E3')
+        dlg.resizable(True, True)
+        dlg.geometry('600x400')
+        dlg.transient(self.root)
+        dlg.grab_set()
+        
+        try:
+            dlg.iconbitmap(self.get_resource_path("img", "kiosco.ico"))
+        except:
+            pass
+        
+        # Header
+        header_frame = tk.Frame(dlg, bg='#D94A2B', height=50)
+        header_frame.pack(fill='x')
+        tk.Label(header_frame, text=f"Movimientos de Caja (#{caja_id})", font=('Arial', 13, 'bold'), bg='#D94A2B', fg='white').pack(pady=10)
+        
+        # Frame con tabla
+        table_frame = tk.Frame(dlg, bg='#FAF2E3')
+        table_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Headers de la tabla
+        cols = ['Tipo', 'Monto', 'Descripción', 'Fecha']
+        header_data = []
+        for col in cols:
+            header_data.append(col)
+        
+        # Crear Treeview
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('Treeview', font=('Arial', 10), rowheight=25)
+        style.configure('Treeview.Heading', font=('Arial', 10, 'bold'))
+        
+        tree = ttk.Treeview(table_frame, columns=cols, height=15, show='headings')
+        
+        # Definir columnas
+        tree.column('Tipo', width=60, anchor='center')
+        tree.column('Monto', width=80, anchor='e')
+        tree.column('Descripción', width=280, anchor='w')
+        tree.column('Fecha', width=150, anchor='center')
+        
+        for col in cols:
+            tree.heading(col, text=col)
+        
+        # Insertar datos
+        for mov in movimientos:
+            tipo, monto, desc, fecha = mov
+            color = '#16a34a' if tipo == 'Ingreso' else '#dc2626'
+            tree.insert('', 'end', values=(tipo, f'${monto:,.2f}', desc[:40] + ('...' if len(desc) > 40 else ''), fecha), tags=(color,))
+        
+        # Configurar colores por tipo
+        tree.tag_configure('#16a34a', foreground='#16a34a')
+        tree.tag_configure('#dc2626', foreground='#dc2626')
+        
+        # Scrollbar
+        scroll = ttk.Scrollbar(table_frame, orient='vertical', command=tree.yview)
+        tree.configure(yscroll=scroll.set)
+        tree.pack(side='left', fill='both', expand=True)
+        scroll.pack(side='right', fill='y')
+        
+        # Botón cerrar
+        btn_frame = tk.Frame(dlg, bg='#FAF2E3')
+        btn_frame.pack(fill='x', padx=10, pady=10)
+        tk.Button(btn_frame, text="Cerrar", font=('Arial', 11), bg='#ef4444', fg='white', command=lambda: (dlg.grab_release(), dlg.destroy()), cursor='hand2', padx=20, pady=8).pack(side='right')
+    
+    def registrar_movimiento_caja(self):
+        """Abre diálogo para registrar ingresos y egresos de caja."""
+        caja = self.get_caja_abierta()
+        if not caja:
+            messagebox.showinfo("Caja", "No hay caja abierta actualmente")
+            return
+        
+        caja_id = caja[0]
+        
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Movimientos de Caja")
+        dlg.configure(bg='#FAF2E3')
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        
+        # Centrar la ventana
+        self.centrar_ventana(dlg, 500, 420, self.root)
+        
+        try:
+            dlg.iconbitmap(self.get_resource_path("img", "kiosco.ico"))
+        except:
+            pass
+        
+        # Header
+        header_frame = tk.Frame(dlg, bg='#D94A2B', height=50)
+        header_frame.pack(fill='x')
+        tk.Label(header_frame, text="Registrar Movimiento de Caja", font=('Arial', 13, 'bold'), bg='#D94A2B', fg='white').pack(pady=10)
+        
+        # Content frame
+        content_frame = tk.Frame(dlg, bg='#FAF2E3')
+        content_frame.pack(fill='both', expand=True, padx=16, pady=14)
+        
+        # Tipo de movimiento
+        tk.Label(content_frame, text="Tipo de movimiento:", font=('Arial', 11, 'bold'), bg='#FAF2E3', fg='#333').pack(anchor='w', pady=(8, 4))
+        tipo_var = tk.StringVar(value='Ingreso')
+        frame_tipo = tk.Frame(content_frame, bg='#FAF2E3')
+        frame_tipo.pack(anchor='w', pady=4)
+        tk.Radiobutton(frame_tipo, text="Ingreso", variable=tipo_var, value='Ingreso', font=('Arial', 10), bg='#FAF2E3').pack(side='left', padx=5)
+        tk.Radiobutton(frame_tipo, text="Egreso", variable=tipo_var, value='Egreso', font=('Arial', 10), bg='#FAF2E3').pack(side='left', padx=5)
+        
+        # Monto
+        tk.Label(content_frame, text="Monto ($):", font=('Arial', 11, 'bold'), bg='#FAF2E3', fg='#333').pack(anchor='w', pady=(12, 4))
+        entry_monto = tk.Entry(content_frame, font=('Arial', 11), width=20)
+        entry_monto.pack(anchor='w', pady=4)
+        
+        # Descripción
+        tk.Label(content_frame, text="Descripción:", font=('Arial', 11, 'bold'), bg='#FAF2E3', fg='#333').pack(anchor='w', pady=(12, 4))
+        text_descripcion = tk.Text(content_frame, font=('Arial', 10), height=3, width=35)
+        text_descripcion.pack(anchor='w', pady=4)
+        
+        def guardar_movimiento():
+            try:
+                monto = float(entry_monto.get())
+                if monto <= 0:
+                    messagebox.showerror("Error", "El monto debe ser mayor a 0")
+                    return
+            except Exception:
+                messagebox.showerror("Error", "Ingresa un monto válido")
+                return
+            
+            tipo = tipo_var.get()
+            descripcion = text_descripcion.get("1.0", tk.END).strip()
+            fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            self.cursor.execute('''
+                INSERT INTO movimientos_caja (caja_id, tipo, monto, descripcion, fecha)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (caja_id, tipo, monto, descripcion, fecha))
+            self.conn.commit()
+            
+            try:
+                dlg.grab_release()
+            except:
+                pass
+            dlg.destroy()
+            messagebox.showinfo("Éxito", f"{tipo} de ${monto:.2f} registrado correctamente")
+        
+        # Frame de botones
+        frame_bot = tk.Frame(content_frame, bg='#FAF2E3')
+        frame_bot.pack(fill='x', pady=(14, 0), expand=False)
+        tk.Button(frame_bot, text="Confirmar", font=('Arial', 11, 'bold'), bg='#16a34a', fg='white', command=guardar_movimiento, cursor='hand2', padx=20, pady=8).pack(side='left', expand=True, fill='x', padx=(0, 6))
+        tk.Button(frame_bot, text="Cancelar", font=('Arial', 11), bg='#ef4444', fg='white', command=lambda: (dlg.grab_release(), dlg.destroy()), cursor='hand2', padx=20, pady=8).pack(side='left', expand=True, fill='x', padx=(6, 0))
     
     # ===== MÉTODOS DE PRODUCTOS =====
     
@@ -2939,6 +3486,48 @@ class KioscoPOS:
                     # Formatear hoja resumen
                     ws_resumen = writer.sheets['Resumen Estadístico']
                     self._formatear_hoja_excel(ws_resumen, df_resumen, 'Resumen Estadístico General')
+                    
+                    # Historial de Cajas (nueva hoja)
+                    self.cursor.execute('''
+                        SELECT id, usuario, rol, fecha_apertura, fecha_cierre, fondo_inicial, total_ventas_por_metodo, faltante_sobrante, estado, turno
+                        FROM cajas ORDER BY fecha_apertura DESC
+                    ''')
+                    cajas = self.cursor.fetchall()
+                    
+                    if cajas:
+                        cajas_data = []
+                        for caja in cajas:
+                            caja_id, usuario, rol, fecha_ap, fecha_ci, fondo_ini, totales_metodos, falt_sobr, estado, turno = caja
+                            
+                            # Parsear JSON
+                            fondo_inicial = json.loads(fondo_ini) if fondo_ini else {}
+                            totales = json.loads(totales_metodos) if totales_metodos else {}
+                            
+                            cajas_data.append({
+                                'ID': caja_id,
+                                'Usuario': usuario,
+                                'Rol': rol,
+                                'Turno': turno or '',
+                                'Fecha Apertura': fecha_ap,
+                                'Fecha Cierre': fecha_ci or 'Abierta',
+                                'Fondo Inicial Efectivo': fondo_inicial.get('Efectivo', 0),
+                                'Fondo Inicial Transferencia': fondo_inicial.get('Transferencia', 0),
+                                'Fondo Inicial Débito': fondo_inicial.get('Débito', 0),
+                                'Fondo Inicial Crédito': fondo_inicial.get('Crédito', 0),
+                                'Recaudado Efectivo': totales.get('Efectivo', 0),
+                                'Recaudado Transferencia': totales.get('Transferencia', 0),
+                                'Recaudado Débito': totales.get('Débito', 0),
+                                'Recaudado Crédito': totales.get('Crédito', 0),
+                                'Faltante/Sobrante': falt_sobr or 0,
+                                'Estado': estado
+                            })
+                        
+                        df_cajas = pd.DataFrame(cajas_data)
+                        df_cajas.to_excel(writer, sheet_name='Historial de Cajas', index=False)
+                        
+                        # Formatear hoja cajas
+                        ws_cajas = writer.sheets['Historial de Cajas']
+                        self._formatear_hoja_excel(ws_cajas, df_cajas, 'Historial Completo de Cajas')
             
             messagebox.showinfo("Éxito", f"Reporte completo exportado con formato mejorado a:\n{filename}")
         except Exception as e:
@@ -3296,6 +3885,50 @@ class KioscoPOS:
                         # Formatear hoja de resumen diario
                         ws_dias = writer.sheets['Resumen por Días']
                         self._formatear_hoja_excel(ws_dias, df_dias, f'Resumen Diario - {nombre_mes.replace("_", " ")}')
+                    
+                    # Hoja 5: Historial de Cajas del Mes
+                    self.cursor.execute('''
+                        SELECT id, usuario, rol, fecha_apertura, fecha_cierre, fondo_inicial, total_ventas_por_metodo, faltante_sobrante, estado, turno
+                        FROM cajas 
+                        WHERE strftime('%Y-%m', fecha_apertura) = ?
+                        ORDER BY fecha_apertura DESC
+                    ''', (mes_seleccionado,))
+                    cajas_mes = self.cursor.fetchall()
+                    
+                    if cajas_mes:
+                        cajas_data = []
+                        for caja in cajas_mes:
+                            caja_id, usuario, rol, fecha_ap, fecha_ci, fondo_ini, totales_metodos, falt_sobr, estado, turno = caja
+                            
+                            # Parsear JSON
+                            fondo_inicial = json.loads(fondo_ini) if fondo_ini else {}
+                            totales = json.loads(totales_metodos) if totales_metodos else {}
+                            
+                            cajas_data.append({
+                                'ID': caja_id,
+                                'Usuario': usuario,
+                                'Rol': rol,
+                                'Turno': turno or '',
+                                'Fecha Apertura': fecha_ap,
+                                'Fecha Cierre': fecha_ci or 'Abierta',
+                                'Fondo Inicial Efectivo': fondo_inicial.get('Efectivo', 0),
+                                'Fondo Inicial Transferencia': fondo_inicial.get('Transferencia', 0),
+                                'Fondo Inicial Débito': fondo_inicial.get('Débito', 0),
+                                'Fondo Inicial Crédito': fondo_inicial.get('Crédito', 0),
+                                'Recaudado Efectivo': totales.get('Efectivo', 0),
+                                'Recaudado Transferencia': totales.get('Transferencia', 0),
+                                'Recaudado Débito': totales.get('Débito', 0),
+                                'Recaudado Crédito': totales.get('Crédito', 0),
+                                'Faltante/Sobrante': falt_sobr or 0,
+                                'Estado': estado
+                            })
+                        
+                        df_cajas = pd.DataFrame(cajas_data)
+                        df_cajas.to_excel(writer, sheet_name='Historial de Cajas', index=False)
+                        
+                        # Formatear hoja cajas
+                        ws_cajas = writer.sheets['Historial de Cajas']
+                        self._formatear_hoja_excel(ws_cajas, df_cajas, f'Historial de Cajas - {nombre_mes.replace("_", " ")}')
 
                 messagebox.showinfo("Éxito", f"Reporte mensual de {nombre_mes.replace('_', ' ')} exportado exitosamente a:\n{filename}")
                 
@@ -3823,7 +4456,10 @@ class KioscoPOS:
             self.turno_actual = turno_var.get()
             turno_win.grab_release()
             turno_win.destroy()
+            # Mostrar interface principal PRIMERO
             self.crear_pestaña_venta()
+            # LUEGO abrir caja de forma obligatoria
+            self.root.after(500, self.abrir_caja_obligatorio)
 
         tk.Button(turno_win, text="Confirmar", font=('Arial', 14, 'bold'), bg='#2563eb', fg='white', command=confirmar, width=15, height=2).pack(pady=10)
     
