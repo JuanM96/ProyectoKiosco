@@ -1422,7 +1422,7 @@ class KioscoPOS:
         
         tk.Button(
             frame_exportar,
-            text="Exportar Todo a Excel",
+            text="Exportar Todo",
             font=('Arial', 11, 'bold'),
             bg='#16a34a',
             fg='white',
@@ -1452,7 +1452,7 @@ class KioscoPOS:
 
         tk.Button(
             frame_exportar,
-            text="Exportar Ventas por Día a Excel",
+            text="Exportar Ventas X Día",
             font=('Arial', 10, 'bold'),
             bg='#0ea5e9',
             fg='white',
@@ -1462,7 +1462,7 @@ class KioscoPOS:
         
         tk.Button(
             frame_exportar,
-            text="Exportar Ventas por Mes a Excel",
+            text="Exportar Ventas X Mes",
             font=('Arial', 10, 'bold'),
             bg='#16a34a',
             fg='white',
@@ -1487,16 +1487,16 @@ class KioscoPOS:
             fg='white',
             command=self.actualizar_tabla_ventas,
             cursor='hand2'
-        ).pack(side='left', padx=5)
+        ).pack(side='left', padx=10)
         
         # Separador visual antes del botón peligroso
-        tk.Label(
-            frame_exportar,
-            text=" | ",
-            font=('Arial', 12, 'bold'),
-            bg='#FAF2E3',
-            fg='gray'
-        ).pack(side='left', padx=10)
+        # tk.Label(
+        #     frame_exportar,
+        #     text=" | ",
+        #     font=('Arial', 12, 'bold'),
+        #     bg='#FAF2E3',
+        #     fg='gray'
+        # ).pack(side='left', padx=10)
         
         # Botón para eliminar reportes (peligroso)
         tk.Button(
